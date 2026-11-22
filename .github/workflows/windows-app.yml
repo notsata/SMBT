@@ -49,4 +49,4 @@ jobs:
           try { Invoke-RestMethod http://127.0.0.1:8765/api/overview | Out-Null; throw "overview answered without a price provider" }
           catch { if ($_.Exception.Response.StatusCode.value__ -ne 503) { throw } ; "overview without keys: 503 as expected" }
           Stop-Process -Id $p.Id -Force
-          Get-Content "$env:LOCALAPPDATA\SMBT\smbt.log" -Tail 15
+          Get-Content out.txt, err.txt -Tail 15   # the app logs to its console window; no log file is written

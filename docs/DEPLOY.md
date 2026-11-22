@@ -53,7 +53,7 @@ Tests: `python -m pytest -q` (backend; includes the real-browser test when `fron
 
 ## 4. Windows desktop app
 
-`SMBT-Setup.exe` (built by the `windows-app` workflow) installs per user and runs in `personal` mode on `127.0.0.1:8765`. On first start it creates `%LOCALAPPDATA%\SMBT\settings.env` listing every provider key; add yours, save, restart SMBT. Only that settings file and a log are written; no market data is stored.
+`SMBT-Setup.exe` (built by the `windows-app` workflow) installs per user and runs in `personal` mode on `127.0.0.1:8765`. On first start it creates `%LOCALAPPDATA%\SMBT\settings.env` listing every provider key; add yours, save, restart SMBT. Only that settings file is written; logs go to the app's console window, and no market data is stored.
 
 ## 5. Installing on devices
 
