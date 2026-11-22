@@ -1,4 +1,4 @@
-// SMBT Pocket logic: NYSE session clock, Alpha Vantage payload parsers, indicators and the stock-state classifier.
+// SMBT phone page: NYSE session clock, quote status and connector payload parsers (analysis lives in quant.js).
 // Pure functions (no DOM, no storage). Loaded by index.html and by logic.test.js in Node.
 (function (root) {
   "use strict";
@@ -147,79 +147,5 @@
     return rows.filter((b, i) => i === 0 || b.t !== rows[i - 1].t);
   }
 
-  // ---------- indicators (same definitions as the server's technical_frame) ----------
-  const last = (a) => a[a.length - 1];
-  function sma(x, n) { const out = Array(x.length).fill(null); let s = 0; for (let i = 0; i < x.length; i++) { s += x[i]; if (i >= n) s -= x[i - n]; if (i >= n - 1) out[i] = s / n; } return out; }
-  function wilder(x, n) { // pandas ewm(alpha=1/n, adjust=False, min_periods=n): seeded with the first value, output from the n-th
-    const out = Array(x.length).fill(null); let v = null, k = 0;
-    for (let i = 0; i < x.length; i++) {
-      if (x[i] === null) continue;
-      v = v === null ? x[i] : v + (x[i] - v) / n;
-      if (++k >= n) out[i] = v;
-    }
-    return out;
-  }
-  function rsi(c, n = 14) {
-    const d = c.map((v, i) => (i ? v - c[i - 1] : null));
-    const up = wilder(d.map((v) => (v === null ? null : Math.max(v, 0))), n), dn = wilder(d.map((v) => (v === null ? null : Math.max(-v, 0))), n);
-    return up.map((u, i) => (u === null || dn[i] === null ? null : dn[i] === 0 ? 100 : 100 - 100 / (1 + u / dn[i])));
-  }
-  function std(a, ddof = 0) { const m = a.reduce((s, v) => s + v, 0) / a.length; return Math.sqrt(a.reduce((s, v) => s + (v - m) ** 2, 0) / (a.length - ddof)); }
-  function indicators(bars) {
-    const c = bars.map((b) => b.c), n = c.length, i = n - 1;
-    const s20 = sma(c, 20), s50 = sma(c, 50), s200 = sma(c, 200), r = rsi(c, 14);
-    const tr = bars.map((b, k) => (k ? Math.max(b.h - b.l, Math.abs(b.h - bars[k - 1].c), Math.abs(b.l - bars[k - 1].c)) : b.h - b.l));
-    const atr = wilder(tr, 14);
-    const win = c.slice(Math.max(0, n - 252));
-    const hi = n >= 50 ? Math.max(...win) : null;
-    const rets = c.slice(1).map((v, k) => Math.log(v / c[k]));
-    const vols = bars.map((b) => b.v || 0), hasVol = vols.slice(-50).filter((v) => v > 0).length >= 40;
-    const vAvg = n >= 50 ? vols.slice(-50).reduce((a, v) => a + v, 0) / 50 : null;
-    let obvSlope = null;
-    if (hasVol && n >= 21) { let o = 0; const obv = c.map((v, k) => (k ? (o += Math.sign(v - c[k - 1]) * vols[k]) : 0)); obvSlope = (obv[i] - obv[i - 20]) / vols.slice(-20).reduce((a, v) => a + v, 0); }
-    const bbWin = c.slice(-20), mid = n >= 20 ? s20[i] : null, sd = n >= 20 ? std(bbWin) : null;
-    const dist200Series = c.map((v, k) => (s200[k] ? v / s200[k] - 1 : null)).filter((v) => v !== null);
-    const d200 = s200[i] ? c[i] / s200[i] - 1 : null;
-    return {
-      n, close: c[i], sma20: s20[i], sma50: s50[i], sma200: s200[i], dist200: d200,
-      sma200_slope: s200[i] && s200[i - 20] ? s200[i] / s200[i - 20] - 1 : null,
-      rsi14: r[i], atr_pct: atr[i] ? atr[i] / c[i] : null,
-      bb_pctb: sd ? (c[i] - (mid - 2 * sd)) / (4 * sd) : null,
-      hv20: rets.length >= 20 ? std(rets.slice(-20), 1) * Math.sqrt(252) : null,
-      roc20: n > 20 ? c[i] / c[i - 20] - 1 : null, roc63: n > 63 ? c[i] / c[i - 63] - 1 : null,
-      drawdown: hi ? c[i] / hi - 1 : null, highWindow: win.length,
-      vol_ratio: hasVol && vAvg ? vols[i] / vAvg : null, obv_slope20: obvSlope,
-      // percentile of today's distance from the 200-day within its own history (min 252 observations, as on the server)
-      dist_pct: dist200Series.length >= 252 ? dist200Series.filter((v) => v <= d200).length / dist200Series.length : null,
-      series: { sma50: s50, sma200: s200 },
-    };
-  }
-
-  // ---------- stock state (server classify_row without divergence and relative-strength inputs) ----------
-  const pct0 = (v) => `${Math.round(v * 100)}%`;
-  function classify(x) {
-    const { close, sma20, sma50, sma200, drawdown: dd, rsi14: r, sma200_slope: slope, dist_pct, dist200 } = x;
-    if ([close, sma50, sma200, dd, r, slope].some((v) => v === null || v === undefined)) return ["neutral", ["Insufficient history: needs at least 220 daily sessions"]];
-    const slopeUp = slope > 0, obvUp = (x.obv_slope20 ?? 0) > 0.05;
-    if (dist_pct !== null && dist_pct >= 0.95 && r >= 75)
-      return ["potential_exhaustion", [`Distance from 200-day (${(dist200 * 100).toFixed(1)}%) is in the top 5% of its own history`, `RSI ${r.toFixed(0)}`]];
-    if (close < sma200 && !slopeUp && dd <= -0.15 && (sma50 < sma200 || dd <= -0.25)) {
-      const why = ["Below a falling 200-day average", sma50 < sma200 ? "50-day below 200-day" : "Drawdown beyond 25%", `Drawdown ${pct0(dd)}`];
-      if (obvUp && close > sma20) return ["possible_accumulation", [...why, "But: on-balance volume rising and price above the 20-day"]];
-      return ["structural_decline", why];
-    }
-    if ((dd <= -0.15 || close < sma200) && obvUp && close > sma20 && close > sma50)
-      return ["possible_accumulation", [`Drawdown ${pct0(dd)}`, "Price reclaimed short-term averages", "On-balance volume rising"]];
-    if (slopeUp && dd >= -0.15 && dd <= -0.04 && close > sma200 * 0.97) {
-      const why = ["200-day average still rising", `Pullback of ${pct0(dd)} from 52-week high`, `RSI ${r.toFixed(0)}`];
-      if (x.vol_ratio !== null && x.vol_ratio < 1.5) why.push("Volume not abnormal (no distribution spike)");
-      return ["normal_pullback", why];
-    }
-    if (slopeUp && close > sma50) return ["uptrend_intact", ["Above rising 200-day and 50-day averages", `Drawdown ${pct0(dd)}`]];
-    return ["neutral", [`${close > sma200 ? "Above" : "Below"} the 200-day average (${(dist200 * 100).toFixed(1)}%)`, `Drawdown ${pct0(dd)}`, "No clear pullback, accumulation, decline or exhaustion pattern"]];
-  }
-  const STATE_LABELS = { potential_exhaustion: "Potential exhaustion", structural_decline: "Deeper structural decline", possible_accumulation: "Possible accumulation",
-    normal_pullback: "Normal pullback", uptrend_intact: "Uptrend intact", neutral: "Neutral / no clear setup" };
-
-  root.SMBT = { isTradingDay, sessionAt, quoteStatus, parseQuote, parseDaily, providerMessage, indicators, classify, STATE_LABELS, sma, rsi };
+  root.SMBT = { isTradingDay, sessionAt, quoteStatus, parseQuote, parseDaily, providerMessage };
 })(typeof window !== "undefined" ? window : globalThis);

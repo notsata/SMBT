@@ -1,7 +1,7 @@
 <title>SMBT Market Terminal</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <style>
-/* Layout: phone-first single column (quote, state, chart, indicators); two columns from 900px. Same tokens as the SMBT PWA. */
+/* Layout: sticky header with a scrollable tab strip; one column on phones, two from 900px. Tokens match the SMBT PWA. */
 :root {
   --bg: #f4f6f9; --panel: #ffffff; --panel2: #eef1f5; --line: #d9dfe7; --fg: #0f1720; --muted: #5a6778;
   --accent: #1f6feb; --up: #0b8a7c; --down: #d23f3a; --warn: #a8690c;
@@ -15,190 +15,280 @@
   --bg: #090c11; --panel: #10151c; --panel2: #161c25; --line: #232c38; --fg: #e6edf3; --muted: #8894a5;
   --accent: #4c9aff; --up: #26a69a; --down: #ef5350; --warn: #f0b429; color-scheme: dark }
 body { background: var(--bg); color: var(--fg); font: 14px/1.5 var(--sans); font-feature-settings: "tnum" 1; }
-.wrap { max-width: 1100px; margin: 0 auto; padding-block: 12px 32px;
-  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 12px; }
-header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
-.brand { font-weight: 700; letter-spacing: 0.02em; }
-.brand small { display: block; font-weight: 400; color: var(--muted); font-size: 11px; letter-spacing: 0; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--panel); }
+.inner { max-width: 1100px; margin: 0 auto; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+header.top { position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5; background: var(--panel); border-bottom: 1px solid var(--line); }
+header.top .row { display: flex; align-items: center; gap: 8px 12px; padding-block: 8px 4px; flex-wrap: wrap; }
+.brand { font-weight: 700; } .brand small { font-weight: 400; color: var(--muted); font-size: 11px; margin-left: 6px; }
 .session { margin-left: auto; font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
-.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
-.dot.open { background: var(--up); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); } .dot.open { background: var(--up); }
+nav.tabs { display: flex; gap: 2px; overflow-x: auto; scrollbar-width: none; padding-bottom: 6px; }
+nav.tabs::-webkit-scrollbar { display: none; }
+nav.tabs a { flex: none; padding: 6px 10px; border-radius: 8px; color: var(--muted); text-decoration: none; font-weight: 600; font-size: 13px; }
+nav.tabs a[aria-current="page"] { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--panel)); }
+main.inner { padding-block: 12px 40px; display: grid; gap: 12px; }
+section[data-tab] { display: grid; gap: 12px; min-width: 0; }
 .bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-button, input { font: inherit; color: inherit; }
+button, input, select { font: inherit; color: inherit; }
 .chip { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 6px 10px; font-size: 13px; font-weight: 600; cursor: pointer; }
 .chip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--panel)); }
-form.find { display: flex; gap: 6px; flex: 1 1 180px; max-width: 260px; }
-form.find input { flex: 1; min-width: 0; border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 6px 10px; text-transform: uppercase; }
+.find { display: flex; gap: 6px; flex: 1 1 160px; max-width: 260px; }
+.find input, .field { min-width: 0; border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 6px 10px; }
+.find input { flex: 1; text-transform: uppercase; }
 .btn { border: 0; background: var(--accent); color: #fff; border-radius: 8px; padding: 6px 12px; font-weight: 600; cursor: pointer; }
+.btn:disabled { opacity: 0.5; cursor: default; }
 .btn.ghost { background: transparent; color: var(--accent); border: 1px solid var(--line); }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.grid { display: grid; gap: 12px; }
-@media (min-width: 900px) { .grid { grid-template-columns: minmax(0, 1fr) 340px; } }
+.grid2 { display: grid; gap: 12px; }
+@media (min-width: 900px) { .grid2 { grid-template-columns: minmax(0, 1fr) 340px; } }
+.col { display: grid; gap: 12px; align-content: start; min-width: 0; }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; min-width: 0; }
-.panel h2 { margin: 0 0 8px; font-size: 13px; font-weight: 600; display: flex; justify-content: space-between; gap: 8px; align-items: center; }
-.panel h2 span { font-weight: 400; color: var(--muted); font-size: 12px; }
+.panel h2 { margin: 0 0 8px; font-size: 13px; font-weight: 600; display: flex; justify-content: space-between; gap: 8px; align-items: center; flex-wrap: wrap; }
+.panel h2 .meta { font-weight: 400; color: var(--muted); font-size: 12px; }
 .quote { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; }
-.px { font-size: 32px; font-weight: 700; line-height: 1.1; }
-.chg { font-size: 16px; font-weight: 600; }
-.up { color: var(--up); } .down { color: var(--down); } .muted { color: var(--muted); }
-.badge { display: inline-flex; align-items: center; gap: 5px; border: 1px solid currentColor; border-radius: 6px; padding: 1px 6px; font: 600 11px/18px var(--sans); letter-spacing: 0.03em; }
+.px { font-size: 30px; font-weight: 700; line-height: 1.1; } .chg { font-size: 16px; font-weight: 600; }
+.up { color: var(--up); } .down { color: var(--down); } .muted { color: var(--muted); } .warn { color: var(--warn); }
+.badge { display: inline-flex; align-items: center; gap: 5px; border: 1px solid currentColor; border-radius: 6px; padding: 0 6px; font: 600 11px/18px var(--sans); letter-spacing: 0.03em; white-space: nowrap; }
 .b-LIVE { color: var(--up); } .b-DELAYED { color: var(--accent); } .b-STALE { color: var(--warn); } .b-CLOSED { color: var(--muted); } .b-UNAVAILABLE { color: var(--down); }
 .b-LIVE::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; animation: pulse 1.6s infinite; }
 @keyframes pulse { 50% { opacity: 0.3; } }
 @media (prefers-reduced-motion: reduce) { .b-LIVE::before { animation: none; } }
-details.src { margin-top: 6px; font-size: 12px; }
-details.src summary { color: var(--muted); cursor: pointer; text-decoration: underline dotted; width: fit-content; }
+details.src { font-size: 12px; } details.src summary { color: var(--muted); cursor: pointer; text-decoration: underline dotted; width: fit-content; }
 dl.kv { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 6px 0 0; background: var(--panel2); border-radius: 8px; padding: 8px; }
 dl.kv dt { color: var(--muted); } dl.kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
-.state { font-size: 20px; font-weight: 700; }
-.s-normal_pullback, .s-possible_accumulation, .s-uptrend_intact { color: var(--up); }
-.s-structural_decline { color: var(--down); } .s-potential_exhaustion { color: var(--warn); } .s-neutral { color: var(--muted); }
+.cards { display: grid; gap: 8px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+@media (min-width: 700px) { .cards { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; min-width: 0; display: grid; gap: 4px; align-content: start; text-align: left; cursor: pointer; }
+.card[aria-expanded="true"] { border-color: var(--accent); }
+.card .lab { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+.card .val { font-size: 22px; font-weight: 700; line-height: 1.2; } .card .val.txt { font-size: 15px; }
+.card .sub { font-size: 11px; color: var(--muted); }
+.gauge { height: 5px; border-radius: 3px; background: var(--panel2); overflow: hidden; } .gauge i { display: block; height: 100%; border-radius: 3px; }
+.r-strong_bull, .r-recovery { color: var(--up); } .r-early_bear, .r-bear_capitulation { color: var(--down); } .r-distribution, .r-bull_correction { color: var(--warn); } .r-sideways { color: var(--muted); }
+.s-normal_pullback, .s-possible_accumulation, .s-uptrend_intact { color: var(--up); } .s-structural_decline { color: var(--down); } .s-potential_exhaustion { color: var(--warn); } .s-neutral { color: var(--muted); }
+.big { font-size: 20px; font-weight: 700; }
 ul.why { margin: 6px 0 0; padding-left: 18px; }
-#chart { height: 320px; width: 100%; touch-action: none; }
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-td { padding: 5px 0; border-bottom: 1px solid var(--line); }
-td:last-child { text-align: right; font-family: var(--mono); }
+.chart { height: 300px; width: 100%; touch-action: none; }
+.chart.small { height: 160px; }
+.scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+th { text-align: left; font-weight: 600; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; padding: 4px 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td { padding: 5px 6px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+td.n, th.n { text-align: right; font-family: var(--mono); }
+tr.click { cursor: pointer; } tr.click:hover td { background: var(--panel2); }
 .note { font-size: 12px; color: var(--muted); margin: 8px 0 0; }
 .msg { border-radius: 10px; padding: 10px 12px; font-size: 13px; border: 1px solid var(--line); background: var(--panel2); }
 .msg.err { border-color: color-mix(in srgb, var(--down) 45%, transparent); background: color-mix(in srgb, var(--down) 8%, var(--panel)); }
 .msg b { display: block; margin-bottom: 2px; }
 .opts { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--muted); align-items: center; }
 .opts label { display: flex; gap: 6px; align-items: center; }
+.drivers li { display: grid; grid-template-columns: minmax(0, 1fr) 70px 40px; gap: 8px; align-items: center; font-size: 12.5px; padding: 2px 0; }
+.drivers { list-style: none; margin: 0; padding: 0; }
+.pill { display: inline-block; border-radius: 6px; padding: 0 6px; font-size: 11px; font-weight: 600; margin: 1px 2px 1px 0; }
+.pill.bullish { color: var(--up); background: color-mix(in srgb, var(--up) 12%, transparent); } .pill.bearish { color: var(--down); background: color-mix(in srgb, var(--down) 12%, transparent); }
+.progress { height: 4px; background: var(--panel2); border-radius: 2px; overflow: hidden; } .progress i { display: block; height: 100%; background: var(--accent); transition: width 0.3s; }
+.chat { display: grid; gap: 8px; }
+.bubble { border-radius: 12px; padding: 8px 12px; max-width: 92%; white-space: pre-wrap; overflow-wrap: anywhere; }
+.bubble.user { justify-self: end; background: color-mix(in srgb, var(--accent) 14%, var(--panel)); }
+.bubble.ai { justify-self: start; background: var(--panel2); }
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); z-index: 20; max-width: min(92vw, 520px); }
 .skeleton { color: var(--muted); }
 </style>
 
-<div class="wrap">
-  <header>
-    <div class="brand">SMBT <small>Turning-point research · <span id="via">runs on your market-data connector</span></small></div>
-    <div class="session" id="session"><span class="dot"></span><span>New York session</span></div>
-  </header>
-
-  <div class="bar" role="group" aria-label="Symbol">
-    <span id="chips" class="bar"></span>
-    <form class="find" id="find">
-      <input id="ticker" aria-label="Ticker" placeholder="Any ticker" autocomplete="off" autocapitalize="characters" maxlength="12">
-      <button class="btn" type="submit">Go</button>
-    </form>
+<header class="top">
+  <div class="inner">
+    <div class="row">
+      <div class="brand">SMBT<small id="via">market terminal</small></div>
+      <div class="session" id="session"><span class="dot"></span><span>New York session</span></div>
+    </div>
+    <nav class="tabs" id="tabs" aria-label="Sections"></nav>
   </div>
+</header>
 
+<main class="inner">
   <div id="banner" hidden></div>
 
-  <div class="grid">
-    <div class="grid" style="grid-template-columns: minmax(0,1fr); align-content: start">
-      <section class="panel" aria-labelledby="q-h">
-        <h2 id="q-h"><span style="color:var(--fg);font-weight:600" id="q-sym">—</span><span id="q-time"></span></h2>
-        <div class="quote" id="quote"><span class="skeleton">Waiting for the connector…</span></div>
-        <details class="src" id="q-src"><summary>source &amp; method</summary><dl class="kv" id="q-kv"></dl></details>
-        <div class="opts" style="margin-top:8px">
-          <button class="btn ghost" id="refresh" type="button">Refresh</button>
-          <label><input type="checkbox" id="auto"> Auto-refresh every 60 s</label>
-          <label id="rt-l" hidden><input type="checkbox" id="rt"> Ask for real-time (premium keys)</label>
-          <label id="full-l" hidden><input type="checkbox" id="full"> Full history (premium keys)</label>
-        </div>
-      </section>
-      <section class="panel" aria-labelledby="c-h">
-        <h2 id="c-h">Daily chart <span id="c-meta"></span></h2>
-        <div id="chart" role="img" aria-label="Daily candlestick chart with 50 and 200 day averages"></div>
-        <p class="note">Blue: 50-day average · grey: 200-day average. A tinted last candle is today's session in progress, not a confirmed close.</p>
-      </section>
+  <section data-tab="dashboard" hidden>
+    <div class="bar" id="mk-chips" role="group" aria-label="Market"></div>
+    <div class="panel"><h2><span id="mk-sym">Market</span><span class="meta" id="mk-qtime"></span></h2><div id="mk-quote" class="quote skeleton">Waiting for the connector…</div><details class="src"><summary>source &amp; method</summary><dl class="kv" id="mk-qkv"></dl></details></div>
+    <div class="cards" id="mk-cards"></div>
+    <div class="panel" id="mk-detail" hidden></div>
+    <div class="panel" id="mk-verdict" hidden></div>
+    <div class="grid2">
+      <div class="panel"><h2>Price with historical signals <span class="meta" id="mk-cmeta"></span></h2><div class="chart" id="mk-chart"></div>
+        <p class="note">B = Bottom score crossed 70 · T = Top risk crossed 70 · ● RSI divergence · C/D = capitulation / distribution regime. Tap a marker for what triggered it.</p>
+        <div id="mk-event"></div></div>
+      <div class="panel"><h2>Score drivers <span class="meta">heuristic</span></h2><div id="mk-drivers" class="skeleton">—</div></div>
     </div>
-    <div class="grid" style="grid-template-columns: minmax(0,1fr); align-content: start">
-      <section class="panel" aria-labelledby="s-h">
-        <h2 id="s-h">Stock state <span>confirmed closes</span></h2>
-        <div id="state" class="skeleton">—</div>
-        <p class="note">Same rules as the SMBT server's Analyze page, without its divergence and relative-strength inputs. A heuristic reading, not a forecast.</p>
-      </section>
-      <section class="panel" aria-labelledby="i-h">
-        <h2 id="i-h">Indicators <span id="i-meta"></span></h2>
-        <table><tbody id="ind"><tr><td class="skeleton">—</td><td></td></tr></tbody></table>
-      </section>
-      <details class="panel src" id="diag"><summary>Connection details</summary><dl class="kv" id="d-kv"></dl></details>
+    <div class="panel"><h2>Historical outcomes for today's score buckets <span class="meta">empirical frequency</span></h2><div class="scroll" id="mk-prob"><span class="skeleton">—</span></div>
+      <p class="note">Past days whose score fell in today's 10-point bucket, counted with independent episodes. Positive out-of-sample Brier skill means the bucket beat the plain base rate; negative means it added nothing for that event.</p></div>
+  </section>
+
+  <section data-tab="analyze" hidden>
+    <div class="bar">
+      <span class="bar" id="an-chips"></span>
+      <form class="find" id="an-find"><input id="an-ticker" aria-label="Ticker" placeholder="Any ticker" autocomplete="off" autocapitalize="characters" maxlength="12"><button class="btn" type="submit">Go</button></form>
     </div>
-  </div>
-  <p class="note">Nothing is saved: symbols and settings last until you close this page. Data comes only from your own Twelve Data or Alpha Vantage connector; no prices are bundled or estimated.</p>
-</div>
+    <div class="grid2">
+      <div class="col">
+        <div class="panel"><h2><span id="an-sym">—</span><span class="meta" id="an-qtime"></span></h2><div class="quote skeleton" id="an-quote">—</div>
+          <details class="src"><summary>source &amp; method</summary><dl class="kv" id="an-qkv"></dl></details>
+          <div class="opts" style="margin-top:8px"><button class="btn ghost" id="an-refresh" type="button">Refresh</button>
+            <label><input type="checkbox" id="auto"> Auto-refresh every 60 s</label>
+            <label id="rt-l" hidden><input type="checkbox" id="rt"> Ask for real-time (premium keys)</label>
+            <label id="full-l" hidden><input type="checkbox" id="full"> Full history (premium keys)</label></div></div>
+        <div class="panel"><h2>Daily chart <span class="meta" id="an-cmeta"></span></h2><div class="chart" id="an-chart"></div>
+          <p class="note">Blue: 50-day average · grey: 200-day average. A tinted last candle is today's session in progress, not a confirmed close.</p></div>
+      </div>
+      <div class="col">
+        <div class="panel"><h2>Stock state <span class="meta">confirmed closes</span></h2><div id="an-state" class="skeleton">—</div></div>
+        <div class="panel"><h2>Indicators <span class="meta" id="an-imeta"></span></h2><table><tbody id="an-ind"><tr><td class="skeleton">—</td><td></td></tr></tbody></table></div>
+      </div>
+    </div>
+  </section>
+
+  <section data-tab="charts" hidden>
+    <div class="bar" id="ch-syms"></div>
+    <div class="bar" id="ch-picks" role="group" aria-label="Indicators"></div>
+    <div class="panel"><h2><span id="ch-title">Indicators</span><span class="meta" id="ch-meta"></span></h2><div id="ch-panes"></div>
+      <p class="note">Price on top, one indicator per pane, all on one time axis (pinch or drag any pane). Up to four indicators. Completed sessions only.</p></div>
+  </section>
+
+  <section data-tab="scanner" hidden>
+    <div class="panel"><h2>Setup scanner <span class="meta" id="sc-meta">20 liquid ETFs and large caps</span></h2>
+      <div class="opts"><button class="btn" id="sc-run" type="button">Run scan</button>
+        <label>Rank <select class="field" id="sc-dir"><option value="bullish">bullish setups</option><option value="bearish">bearish setups</option></select></label>
+        <label>Setup <select class="field" id="sc-flag"><option value="">all</option></select></label></div>
+      <div class="progress" id="sc-prog" hidden style="margin-top:8px"><i style="width:0"></i></div>
+      <p class="note" id="sc-status">Loads 20 daily histories (one request each). On a free Twelve Data plan that takes about 3 minutes; results stay for this visit.</p></div>
+    <div class="panel"><div class="scroll" id="sc-table"></div></div>
+    <div class="panel"><h2>Historical evidence per setup <span class="meta">pooled across the scanned symbols</span></h2><div class="scroll" id="sc-evidence"><span class="skeleton">Run a scan first.</span></div>
+      <p class="note">Evidence = mean 20-session forward return after past onsets of each setup, minus each symbol's own average, pooled across today's list (survivorship bias; overlapping windows overstate t-stats).</p></div>
+  </section>
+
+  <section data-tab="validate" hidden>
+    <div class="panel"><h2>Walk-forward strategy test <span class="meta">strict out-of-sample</span></h2>
+      <div class="opts"><label>Symbol <select class="field" id="va-sym"></select></label><label>Strategy <select class="field" id="va-strat"></select></label><button class="btn" id="va-run" type="button">Run test</button></div>
+      <div id="va-out" style="margin-top:10px"></div></div>
+    <div class="panel"><h2>Signal scoreboard <span class="meta" id="va-sbmeta">60-session forward, next-open entry</span></h2>
+      <button class="btn ghost" id="va-sb" type="button">Compute scoreboard</button><div class="scroll" id="va-sbout" style="margin-top:8px"></div><div id="va-report"></div></div>
+  </section>
+
+  <section data-tab="history" hidden>
+    <div class="bar" id="hi-chips"></div>
+    <div class="panel"><h2>Closest past conditions <span class="meta" id="hi-meta">historical similarity</span></h2><div class="scroll" id="hi-matches"><span class="skeleton">—</span></div>
+      <p class="note">Similarity of point-in-time percentile fingerprints (1 = identical): distance from the 200-day, 63-day momentum, drawdown and 20-day volatility. Matches are at least 40 sessions apart and exclude the last 126. Context, not odds.</p></div>
+    <div class="grid2">
+      <div class="panel"><h2>What followed the matches <span class="meta">vs all days</span></h2><div class="scroll" id="hi-dist"></div></div>
+      <div class="panel"><h2>Named turning points</h2><div class="scroll" id="hi-keys"></div></div>
+    </div>
+  </section>
+
+  <section data-tab="alerts" hidden>
+    <div class="panel"><h2>New alert <span class="meta">this visit only</span></h2>
+      <form class="opts" id="al-form">
+        <select class="field" id="al-kind"><option value="price_above">Price rises above</option><option value="price_below">Price falls below</option><option value="rsi_below">RSI(14) falls below</option><option value="rsi_above">RSI(14) rises above</option><option value="bottom_above">Bottom score rises above</option><option value="top_above">Top risk rises above</option><option value="regime">Market regime changes</option></select>
+        <input class="field" id="al-sym" placeholder="Symbol" value="SPY" maxlength="12" style="width:90px;text-transform:uppercase" aria-label="Symbol">
+        <input class="field" id="al-th" type="number" step="any" placeholder="Level" style="width:100px" aria-label="Level">
+        <button class="btn" type="submit">Add</button></form>
+      <p class="note">Checked every 5 minutes while this page is open (one request per symbol). Alerts fire once when the condition starts and re-arm after it ends. They show here and as a banner; nothing is stored or sent anywhere.</p></div>
+    <div class="panel"><h2>Active rules</h2><div id="al-rules" class="skeleton">No alerts yet.</div></div>
+    <div class="panel"><h2>Fired</h2><div id="al-fired" class="skeleton">Nothing yet.</div></div>
+  </section>
+
+  <section data-tab="analyst" hidden>
+    <div class="panel"><h2>AI analyst <span class="meta">answers only from this page's live numbers</span></h2>
+      <div class="chat" id="ai-log"><div class="bubble ai">Ask about the market or a ticker, for example: "Is SPY closer to a bottom or a top right now?" or "What does history say after NVDA's current setup?" I look up the numbers on this page (scores, stock state, signal statistics, analogs, backtests) and cite them.</div></div>
+      <form class="find" id="ai-form" style="max-width:none;margin-top:10px"><input id="ai-q" style="text-transform:none" placeholder="Your question" aria-label="Question" autocomplete="off"><button class="btn" type="submit" id="ai-send">Ask</button><button class="btn ghost" type="button" id="ai-stop" hidden>Stop</button></form>
+      <p class="note">Runs on your own Claude account. Research, not investment advice.</p></div>
+  </section>
+
+  <section data-tab="sources" hidden>
+    <div class="panel"><h2>Connection</h2><dl class="kv" id="d-kv"></dl></div>
+    <div class="panel"><h2>Not available on this page</h2>
+      <ul class="why"><li><b>VIX and its term structure</b>: Twelve Data and Alpha Vantage don't cover indexes.</li><li><b>S&amp;P 500 breadth</b>: needs every member's history, far beyond a free plan's request budget.</li><li><b>Macro series</b> (curve, credit spreads, Fed, unemployment): no FRED connector.</li><li><b>Streaming prices</b>: a page in Claude can't hold a live connection; quotes refresh every 60 s instead.</li></ul>
+      <p class="note">So the Bottom and Top scores use their price-based components only (shown as coverage on each card), and the regime ignores VIX and breadth. The full set runs in the SMBT server and Windows app. Nothing is saved: everything lasts until you close this page.</p></div>
+  </section>
+</main>
+<div id="toast" class="toast" hidden></div>
 
 <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js" integrity="sha384-OK7vELvjHdhUFi31JYioPIcRHTROLdcDa6ZsNWgvgLaKj+9JqhU0Ad8g4wz3CXjA" crossorigin="anonymous"></script>
 <script src="logic.js"></script>
+<script src="quant.js"></script>
 <script>
 (() => {
   "use strict";
-  // The first connected provider wins: Twelve Data has timestamped quotes and 5,000 daily bars on its free plan.
+  const Q = window.SMBTQ, S = window.SMBT;
+  // ---------- providers: the first connected one wins ----------
   const PROVIDERS = [
-    { server: "Twelve Data", name: "Twelve Data", quote: "get_quote", daily: "get_time_series", premiumOptions: false, limits: "8 requests a minute, 800 a day",
+    { server: "Twelve Data", name: "Twelve Data", quote: "get_quote", daily: "get_time_series", premiumOptions: false, perMin: 8, spacing: 300, limits: "8 requests a minute, 800 a day",
       quoteArgs: (symbol) => ({ symbol }), dailyArgs: (symbol) => ({ symbol, interval: "1day", outputsize: 5000 }) },
-    { server: "Alpha Vantage MCP Server", name: "Alpha Vantage", quote: "GLOBAL_QUOTE", daily: "TIME_SERIES_DAILY", premiumOptions: true, limits: "1 request a second, 25 a day",
+    { server: "Alpha Vantage MCP Server", name: "Alpha Vantage", quote: "GLOBAL_QUOTE", daily: "TIME_SERIES_DAILY", premiumOptions: true, perMin: 30, spacing: 1300, limits: "1 request a second, 25 a day",
       quoteArgs: (symbol, rt) => input("GLOBAL_QUOTE", { symbol, ...(rt ? { entitlement: "realtime" } : {}) }),
       dailyArgs: (symbol, full) => input("TIME_SERIES_DAILY", { symbol, outputsize: full ? "full" : "compact" }) },
   ];
   let P = PROVIDERS[0];
-  const DEFAULTS = ["SPY", "QQQ", "IWM", "DIA"];
-  const $ = (id) => document.getElementById(id);
-  const fmt = (v, d = 2) => (v === null || v === undefined || !Number.isFinite(v) ? "—" : v.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }));
-  const pct = (v, d = 1, signed = false) => (v === null || v === undefined || !Number.isFinite(v) ? "—" : (signed && v > 0 ? "+" : "") + (v * 100).toFixed(d) + "%");
-  const cls = (v) => (v > 0 ? "up" : v < 0 ? "down" : "muted");
-  const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
-  const kv = (el, rows) => { el.innerHTML = rows.filter(([, v]) => v !== undefined && v !== null && v !== "").map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join(""); };
-
-  const st = { mcp: null, perms: null, symbols: [...DEFAULTS], symbol: "SPY", props: {}, compactOnly: true, calls: 0, errors: [], tools: null,
-    quote: null, quoteAt: null, quoteRealtime: false, bars: null, timer: null, loadId: 0,
-    mem: new Map(), // symbol -> last results, this tab only, so switching back costs no requests
-    gate: Promise.resolve(), nextAt: 0 };
+  const MARKETS = ["SPY", "QQQ", "IWM", "DIA"];
+  const UNIVERSE = ["SPY", "QQQ", "IWM", "DIA", "SMH", "XLK", "XLF", "XLE", "XLV", "XLY", "XLI", "TLT", "GLD", "AAPL", "MSFT", "NVDA", "AMZN", "GOOGL", "META", "TSLA"];
+  const TABS = [["dashboard", "Dashboard"], ["analyze", "Analyze"], ["charts", "Charts"], ["scanner", "Scanner"], ["validate", "Validate"], ["history", "History"], ["alerts", "Alerts"], ["analyst", "AI Analyst"], ["sources", "Data sources"]];
   const REUSE_MS = 10 * 60 * 1000;
-  const SPACING_MS = 1300; // free keys refuse bursts (Alpha Vantage: 1 request per second)
+  const $ = (id) => document.getElementById(id);
+  const ok = (v) => typeof v === "number" && Number.isFinite(v);
+  const fmt = (v, d = 2) => (!ok(v) ? "—" : v.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }));
+  const pct = (v, d = 1, signed = false) => (!ok(v) ? "—" : (signed && v > 0 ? "+" : "") + (v * 100).toFixed(d) + "%");
+  const cls = (v) => (v > 0 ? "up" : v < 0 ? "down" : "muted");
+  const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+  const kv = (rows) => rows.filter(([, v]) => v !== undefined && v !== null && v !== "").map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join("");
+  const badge = (status, reason) => `<span class="badge b-${status}" title="${esc(reason || "")}">${status}</span>`;
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const nextFrame = () => new Promise((r) => setTimeout(r, 30)); // let the page paint "Working…" before heavy math
+  const table = (head, rows, attrs = () => "") => `<table><thead><tr>${head.map(([h, n]) => `<th class="${n ? "n" : ""}">${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.map((r, i) => `<tr ${attrs(i)}>${r.map((c, k) => `<td class="${head[k][1] ? "n" : ""}">${c}</td>`).join("")}</tr>`).join("")}</tbody></table>`;
+
+  const st = { mcp: null, perms: null, sample: null, calls: 0, errors: [], tools: null, available: null, props: {},
+    market: "SPY", symbol: "SPY", watch: ["SPY", "QQQ", "NVDA"], tab: "dashboard",
+    quotes: new Map(), daily: new Map(), frames: new Map(), scan: null, scanning: false,
+    gate: Promise.resolve(), nextAt: 0, recent: [], waitUntil: 0, rules: [], fired: [], ai: [], aiCtl: null };
+  class Fail extends Error {}
 
   // ---------- session clock ----------
   function renderSession() {
-    const s = SMBT.sessionAt(new Date());
+    const s = S.sessionAt(new Date()), wait = st.waitUntil - Date.now();
     const label = { regular: "Market open", premarket: "Pre-market", afterhours: "After hours", closed: "Market closed" }[s.session];
-    $("session").innerHTML = `<span class="dot ${s.session === "regular" ? "open" : ""}"></span><span>${label} · last close ${s.lastCompleted}</span>`;
+    $("session").innerHTML = `<span class="dot ${s.session === "regular" ? "open" : ""}"></span><span>${label} · last close ${s.lastCompleted}${wait > 0 ? ` · waiting ${Math.ceil(wait / 1000)} s for ${esc(P.name)}'s rate limit` : ""}</span>`;
     return s;
   }
-
-  // ---------- banner ----------
   function banner(title, body, actions = "") {
     const b = $("banner");
     if (!title) { b.hidden = true; b.innerHTML = ""; return; }
-    b.hidden = false;
-    b.innerHTML = `<div class="msg err"><b>${esc(title)}</b>${esc(body)}${actions}</div>`;
+    b.hidden = false; b.innerHTML = `<div class="msg err"><b>${esc(title)}</b>${esc(body)}${actions}</div>`;
   }
+  function toast(text) { const t = $("toast"); t.hidden = false; t.innerHTML = `<div class="msg"><b>Alert</b>${esc(text)}</div>`; clearTimeout(toast.h); toast.h = setTimeout(() => (t.hidden = true), 8000); }
   const CONNECT_HELP = "In claude.ai, open Settings → Connectors and connect Twelve Data (free account at twelvedata.com), or Alpha Vantage MCP Server. Then reopen this page.";
 
-  // ---------- connector calls ----------
-  function input(tool, wanted) { // only arguments the tool's schema declares; before the schema is known, just the symbol
-    const props = st.props[tool];
-    if (!props) return { symbol: wanted.symbol };
-    return Object.fromEntries(Object.entries(wanted).filter(([k]) => props.has(k)));
-  }
+  // ---------- connector calls: one at a time, within the plan's per-minute limit ----------
+  function input(tool, wanted) { const props = st.props[tool]; return props ? Object.fromEntries(Object.entries(wanted).filter(([k]) => props.has(k))) : { symbol: wanted.symbol }; }
   async function learnSchemas() {
-    if (!P.premiumOptions) return; // Twelve Data's arguments are fixed and known
+    if (!P.premiumOptions) return;
     for (const t of [P.quote, P.daily]) {
       if (st.props[t]) continue;
-      try {
-        const d = await st.mcp.describeTool(P.server, t);
-        const p = d && d.inputSchema && d.inputSchema.properties;
-        if (p) st.props[t] = new Set(Object.keys(p));
-      } catch { /* no schema available yet (not allowed, or older viewer): keep minimal inputs */ }
+      try { const d = await st.mcp.describeTool(P.server, t), p = d && d.inputSchema && d.inputSchema.properties; if (p) st.props[t] = new Set(Object.keys(p)); } catch { /* keep minimal inputs */ }
     }
   }
-  function call(tool, args) { // one request at a time, spaced for the free key's per-second limit
+  function call(tool, args) {
     const run = st.gate.then(async () => {
-      const wait = st.nextAt - Date.now();
-      if (wait > 0) await new Promise((res) => setTimeout(res, wait));
-      try { return await callNow(tool, args); } finally { st.nextAt = Date.now() + SPACING_MS; }
+      for (;;) {
+        const now = Date.now(); st.recent = st.recent.filter((t) => now - t < 60000);
+        const wait = Math.max(st.recent.length >= P.perMin ? st.recent[0] + 60500 - now : 0, st.nextAt - now);
+        if (wait <= 0) break;
+        if (wait > 2000) { st.waitUntil = now + wait; renderSession(); } // only long waits are worth a notice
+        await sleep(Math.min(wait, 1000));
+      }
+      if (st.waitUntil) { st.waitUntil = 0; renderSession(); }
+      st.recent.push(Date.now());
+      try { return await callNow(tool, args); } finally { st.nextAt = Date.now() + P.spacing; renderDiag(); }
     });
     st.gate = run.catch(() => {});
     return run;
-  }
-  const RATE = /spreading out|requests per (day|second)|rate limit|API credits|current minute/i;
-  function friendly(m) { // provider text -> what to do; also recorded in Connection details
-    st.errors.unshift(`${new Date().toLocaleTimeString()} provider: ${m}`.slice(0, 300));
-    st.errors.length = Math.min(st.errors.length, 5);
-    renderDiag();
-    if (/symbol\W.*(missing or invalid|not found)/i.test(m)) return `${P.name} doesn't recognise ${st.symbol}. Check the ticker.`;
-    return RATE.test(m) && !/premium feature/i.test(m)
-      ? `${P.name}'s plan limit was reached (${P.limits}). Wait a minute and tap Refresh; if it keeps happening, today's allowance is used up.`
-      : m;
   }
   async function callNow(tool, args) {
     st.calls++;
@@ -206,243 +296,510 @@ td:last-child { text-align: right; font-family: var(--mono); }
       const r = await st.mcp.callTool(P.server, tool, args, { cache: false });
       return r.payload !== undefined ? r.payload : (r.content || []).filter((c) => c.type === "text").map((c) => c.text).join("\n");
     } catch (e) {
-      if (e && e.retryable) { // at most one unattended retry, reads only
-        await new Promise((res) => setTimeout(res, Math.min(e.retryAfterMs || 1500 + Math.random() * 1000, 60000)));
-        st.calls++;
-        const r = await st.mcp.callTool(P.server, tool, args, { cache: false });
-        return r.payload !== undefined ? r.payload : "";
-      }
+      if (e && e.retryable) { await sleep(Math.min(e.retryAfterMs || 1500 + Math.random() * 1000, 60000)); st.calls++; const r = await st.mcp.callTool(P.server, tool, args, { cache: false }); return r.payload !== undefined ? r.payload : ""; }
       throw e;
     }
   }
-  /** Branch the page on the connector's error code; a provider message (rate limit, bad symbol) stays in its section. */
-  function explain(e) {
+  const RATE = /spreading out|requests per (day|second)|rate limit|API credits|current minute/i;
+  function note(line) { st.errors.unshift(`${new Date().toLocaleTimeString()} ${line}`.slice(0, 300)); st.errors.length = Math.min(st.errors.length, 6); renderDiag(); }
+  function friendly(m, sym) {
+    note(`provider: ${m}`);
+    if (/symbol\W.*(missing or invalid|not found)/i.test(m)) return `${P.name} doesn't recognise ${sym}. Check the ticker.`;
+    return RATE.test(m) && !/premium feature/i.test(m) ? `${P.name}'s plan limit was reached (${P.limits}). Wait a minute and try again; if it keeps happening, today's allowance is used up.` : m;
+  }
+  /** Connector errors: page-level ones become a banner (returns null); the rest a message for the affected section. */
+  function explain(e, sym) {
     const code = e && e.code;
-    st.errors.unshift(`${new Date().toLocaleTimeString()} ${code || "error"}: ${e && e.message ? e.message : e}`.slice(0, 300));
-    st.errors.length = Math.min(st.errors.length, 5);
-    renderDiag();
+    note(`${code || "error"}: ${e && e.message ? e.message : e}`);
     if (code === "server_not_connected" || code === "selection_required") { banner(`${P.name} isn't connected`, " " + CONNECT_HELP); return null; }
     if (code === "needs_reauth") { banner(`Reconnect ${P.name}`, " Your connector needs to sign in again: claude.ai → Settings → Connectors."); return null; }
-    if (code === "not_in_manifest") { banner(`This page isn't allowed to use ${P.name}`, " Allow it from the page's permissions.", ' <button class="btn ghost" id="perm" type="button">Permissions</button>'); $("perm") && ($("perm").onclick = () => st.perms && st.perms.manage().catch(() => {})); return null; }
+    if (code === "not_in_manifest") { banner(`This page isn't allowed to use ${P.name}`, " Allow it from the page's permissions.", ' <button class="btn ghost" id="perm" type="button">Permissions</button>'); $("perm").onclick = () => st.perms && st.perms.manage().catch(() => {}); return null; }
     if (code === "approval_required") { banner("Approval needed", ` Tap Refresh to approve the ${P.name} request.`); return null; }
     if (code === "blocked_by_policy") { banner("Blocked by your organization", ` Your organization's policy blocks this ${P.name} tool.`); return null; }
-    if (code === "tool_error") { // the connector's own words: rate limit, premium-only feature, unknown symbol
-      const r = e.result || {}, text = (r.content || []).filter((c) => c.type === "text").map((c) => c.text).join("\n");
-      const said = SMBT.providerMessage(r.structuredContent) || SMBT.providerMessage(text) || SMBT.providerMessage(e.message);
-      return said ? friendly(said) : `${P.name} reported an error.`;
-    }
-    if (code === "server_unavailable" || code === "upstream_error") return `${P.name} didn't answer. Try Refresh in a moment.`;
+    if (code === "tool_error") { const r = e.result || {}, text = (r.content || []).filter((c) => c.type === "text").map((c) => c.text).join("\n"); const said = S.providerMessage(r.structuredContent) || S.providerMessage(text) || S.providerMessage(e.message); return said ? friendly(said, sym) : `${P.name} reported an error.`; }
+    if (code === "server_unavailable" || code === "upstream_error") return `${P.name} didn't answer. Try again in a moment.`;
     return (e && e.message) || "The request failed.";
   }
+  const asFail = (e, sym) => (e instanceof Fail ? e : new Fail(e instanceof Error && !e.code ? friendly(e.message, sym) : explain(e, sym) || ""));
 
-  // ---------- quote ----------
-  async function loadQuote(id) {
-    const wantRt = P.premiumOptions && $("rt").checked;
-    const args = P.quoteArgs(st.symbol, wantRt);
+  // ---------- data: quotes and daily history, kept for this visit ----------
+  async function getQuote(sym, force = false) {
+    const m = st.quotes.get(sym);
+    if (!force && m && Date.now() - m.at < REUSE_MS) return m;
+    const wantRt = P.premiumOptions && $("rt").checked, args = P.quoteArgs(sym, wantRt);
     try {
-      const q = SMBT.parseQuote(await call(P.quote, args));
-      if (id !== st.loadId) return;
-      st.quote = q; st.quoteAt = new Date(); st.quoteRealtime = wantRt && "entitlement" in args;
-      if (!q) { renderQuoteError(`${P.name} returned no quote for ${st.symbol}. Check the ticker.`); return; }
+      const q = S.parseQuote(await call(P.quote, args));
+      if (!q) throw new Fail(`${P.name} returned no quote for ${sym}. Check the ticker.`);
+      const rec = { q, at: Date.now(), rt: wantRt && "entitlement" in args };
+      st.quotes.set(sym, rec); return rec;
     } catch (e) {
-      if (id !== st.loadId) return;
-      const m = e instanceof Error && !e.code ? friendly(e.message) : explain(e);
-      if (wantRt && m && /premium|entitlement|realtime|real-time/i.test(m)) { // key lacks real-time: say so and fall back once
-        $("rt").checked = false;
-        renderQuoteError("Your Alpha Vantage key doesn't include real-time data, so the delayed quote is shown.");
-        return loadQuote(id);
-      }
-      if (m) renderQuoteError(m);
-      return;
+      const f = asFail(e, sym);
+      if (wantRt && /premium|entitlement|realtime|real-time/i.test(f.message)) { $("rt").checked = false; return getQuote(sym, true); }
+      throw f;
     }
-    remember();
-    renderQuote();
   }
-  function remember() { st.mem.set(st.symbol, { quote: st.quote, quoteAt: st.quoteAt, quoteRealtime: st.quoteRealtime, bars: st.bars, compactOnly: st.compactOnly, at: Date.now() }); }
-  function renderQuoteError(m) {
-    if (!st.quote) $("quote").innerHTML = `<span class="badge b-UNAVAILABLE">UNAVAILABLE</span><span class="muted">${esc(m)}</span>`;
-    else $("q-time").textContent = m;
-  }
-  function renderQuote() {
-    const q = st.quote, s = renderSession();
-    $("q-sym").textContent = q && q.name ? `${st.symbol} · ${q.name}` : st.symbol;
-    if (!q) return;
-    const [status, reason] = SMBT.quoteStatus(q.day, s, st.quoteRealtime, q.quoteTs, Date.now());
-    $("quote").innerHTML = `<span class="px">${fmt(q.last)}</span><span class="chg ${cls(q.change)}">${q.change > 0 ? "+" : ""}${fmt(q.change)} (${pct(q.changePct, 2, true)})</span>
-      <span class="badge b-${status}" title="${esc(reason)}">${status}</span>`;
-    $("q-time").textContent = q.quoteTs ? `last quote ${new Date(q.quoteTs).toLocaleString()}` : `trading day ${q.day} · fetched ${st.quoteAt.toLocaleTimeString()}`;
-    kv($("q-kv"), [["Provider", `${P.name}, through your claude.ai connector`], ["Tool", P.quote], ["Exchange", q.exchange], ["Trading day", q.day],
-      ["Last quote (provider time)", q.quoteTs ? new Date(q.quoteTs).toLocaleString() : "not reported"], ["Fetched", st.quoteAt.toLocaleString()],
-      ["Session", s.session], ["Known delay", q.quoteTs ? "measured from the quote's own time (see Status)" : st.quoteRealtime ? "real-time entitlement requested and accepted" : "not reported by the provider"],
-      ["Open / high / low", `${fmt(q.open)} / ${fmt(q.high)} / ${fmt(q.low)}`], ["Volume", q.volume === null ? "—" : q.volume.toLocaleString()],
-      ["Previous close", fmt(q.prevClose)], ["Status", `${status}: ${reason}`],
-      ["Method", q.quoteTs ? "During regular hours: LIVE when the provider's last quote is at most 2 minutes old, DELAYED up to 20 minutes, STALE beyond. Outside regular hours: the last session's close."
-        : "Alpha Vantage quote endpoint. It reports the trading day but no trade time, so LIVE is shown only with an accepted real-time entitlement during regular hours."]]);
-    drawLiveCandle();
-  }
-
-  // ---------- daily history, indicators, state ----------
-  async function loadDaily(id) {
-    let payload, full = P.premiumOptions && $("full").checked; // Alpha Vantage free keys get the last 100 sessions; full history is premium there
-    st.compactOnly = P.premiumOptions && !full;
+  async function getDaily(sym, force = false) {
+    const m = st.daily.get(sym);
+    if (!force && m && Date.now() - m.at < REUSE_MS * 3) return m;
+    let full = P.premiumOptions ? $("full").checked : true, payload;
     try {
-      payload = await call(P.daily, P.dailyArgs(st.symbol, full));
-      SMBT.parseDaily(payload); // throws on a provider message
+      payload = await call(P.daily, P.dailyArgs(sym, full)); S.parseDaily(payload);
     } catch (e) {
-      if (id !== st.loadId) return;
-      const m = e instanceof Error && !e.code ? friendly(e.message) : explain(e);
-      if (full && m && /premium/i.test(m)) { // key lacks full history: say so and use the compact series once
-        $("full").checked = false; st.compactOnly = true; full = false;
-        banner("Full history needs an Alpha Vantage premium key", " Showing the last 100 sessions.");
-        try { payload = await call(P.daily, P.dailyArgs(st.symbol, false)); }
-        catch (e2) { return renderDailyError(e2 instanceof Error && !e2.code ? friendly(e2.message) : explain(e2)); }
-      } else return m && renderDailyError(m);
+      const f = asFail(e, sym);
+      if (!(P.premiumOptions && full && /premium/i.test(f.message))) throw f;
+      $("full").checked = false; full = false; banner("Full history needs an Alpha Vantage premium key", " Showing the last 100 sessions.");
+      try { payload = await call(P.daily, P.dailyArgs(sym, false)); } catch (e2) { throw asFail(e2, sym); }
     }
-    if (id !== st.loadId) return;
-    let bars;
-    try { bars = SMBT.parseDaily(payload); } catch (e) { return renderDailyError(friendly(e.message)); }
-    if (!bars.length) return renderDailyError(`No daily history for ${st.symbol}.`);
-    st.bars = bars;
-    remember();
-    renderDaily();
+    let bars; try { bars = S.parseDaily(payload); } catch (e) { throw asFail(e, sym); }
+    if (!bars.length) throw new Fail(`No daily history for ${sym}.`);
+    const rec = { bars, at: Date.now(), compact: P.premiumOptions && !full };
+    st.daily.set(sym, rec); return rec;
   }
-  function renderDailyError(m) {
-    if (st.bars) { $("i-meta").insertAdjacentHTML("beforeend", ` <span class="badge b-STALE" title="${esc(m)}">refresh failed</span>`); banner("Couldn't refresh the history", " " + m); return; }
-    $("i-meta").textContent = "";
-    $("state").innerHTML = `<span class="badge b-UNAVAILABLE">UNAVAILABLE</span> <span class="muted">${esc(m)}</span>`;
-    $("ind").innerHTML = `<tr><td class="muted">${esc(m)}</td><td></td></tr>`;
-    $("c-meta").textContent = "";
-    if (chart) series.c.setData([]), series.s50.setData([]), series.s200.setData([]);
+  function confirmed(bars) { const s = S.sessionAt(new Date()); return bars.filter((b) => !(b.t === s.today && (s.session === "premarket" || s.session === "regular"))); }
+  function frameFor(sym, bench) { // indicator frame + scores on completed sessions, computed once per data version
+    const d = st.daily.get(sym), bars = confirmed(d.bars), key = `${sym}:${bars.length}:${bars[bars.length - 1].t}:${bench ? "b" : ""}`;
+    if (!st.frames.has(key)) {
+      const bm = bench && st.daily.get(bench) ? new Map(confirmed(st.daily.get(bench).bars).map((b) => [b.t, b.c])) : null;
+      const f = Q.technicalFrame(bars, bm); st.frames.set(key, { f, sf: Q.scoreFrame(f), compact: d.compact });
+    }
+    return st.frames.get(key);
   }
-  function confirmedBars() { // drop a bar dated today while the session is still running
-    const s = SMBT.sessionAt(new Date());
-    return st.bars.filter((b) => !(b.t === s.today && (s.session === "premarket" || s.session === "regular")));
-  }
-  function renderDaily() {
-    const bars = confirmedBars();
-    if (!bars.length) return renderDailyError(`No completed sessions for ${st.symbol} yet.`);
-    const x = SMBT.indicators(bars), lastT = bars[bars.length - 1].t;
-    const s = SMBT.sessionAt(new Date());
-    const fresh = lastT >= s.lastCompleted ? (s.session === "closed" ? "CLOSED" : "DELAYED") : "STALE";
-    $("i-meta").innerHTML = `<span class="badge b-${fresh}">${fresh}</span> closes through ${lastT}`;
-    $("c-meta").textContent = `${bars.length} sessions · ${bars[0].t} → ${lastT}${st.compactOnly ? " (last 100 sessions)" : ""}`;
-    const rows = [
-      ["Close", fmt(x.close)], ["RSI (14)", fmt(x.rsi14, 1)], ["50-day average", fmt(x.sma50)], ["200-day average", fmt(x.sma200)],
-      ["Distance from 200-day", pct(x.dist200, 1, true)], ["200-day slope (20 sessions)", pct(x.sma200_slope, 2, true)],
-      [`Drawdown from ${x.highWindow >= 252 ? "52-week" : x.highWindow + "-session"} high`, pct(x.drawdown, 1)],
-      ["20-day return", pct(x.roc20, 1, true)], ["63-day return", pct(x.roc63, 1, true)], ["ATR % of price", pct(x.atr_pct, 2)],
-      ["Bollinger %B", fmt(x.bb_pctb)], ["Volatility (20-day, annualised)", pct(x.hv20, 1)], ["Volume vs 50-day average", x.vol_ratio === null ? "—" : fmt(x.vol_ratio) + "×"],
-    ];
-    $("ind").innerHTML = rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td>${esc(v)}</td></tr>`).join("");
-    const [state, why] = SMBT.classify(x);
-    $("state").classList.remove("skeleton");
-    $("state").innerHTML = `<div class="state s-${state}">${esc(SMBT.STATE_LABELS[state])}</div><ul class="why">${why.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>`
-      + (x.sma200 === null && st.compactOnly ? `<p class="note">The 200-day rules need more than the last 100 sessions: tick "Full history" if your Alpha Vantage key is premium.</p>` : "");
-    drawChart(bars, x);
+  function dailyStatus(f) {
+    const s = S.sessionAt(new Date()), last = f.t[f.n - 1];
+    if (last >= s.lastCompleted) return s.session === "closed" ? ["CLOSED", `Market closed; closes through ${last}`] : ["DELAYED", `Closes through ${last}; today's session is not a confirmed close`];
+    return ["STALE", `Provider's latest close is ${last}, but ${s.lastCompleted} has closed`];
   }
 
-  // ---------- chart ----------
-  let chart = null, series = null, chartBars = [];
-  function palette() { const cs = getComputedStyle(document.documentElement), v = (n) => cs.getPropertyValue(n).trim(); return { bg: v("--panel"), fg: v("--muted"), line: v("--line"), up: v("--up"), down: v("--down"), accent: v("--accent"), muted: v("--muted") }; }
-  function ensureChart() {
-    if (chart || !window.LightweightCharts) return !!chart;
-    const p = palette(), el = $("chart");
-    chart = LightweightCharts.createChart(el, { autoSize: true, layout: { background: { type: "solid", color: p.bg }, textColor: p.fg, fontSize: 11 },
+  // ---------- quote block (dashboard and analyze) ----------
+  function renderQuote(prefix, sym, rec, err) {
+    $(prefix + "-sym").textContent = rec && rec.q.name ? `${sym} · ${rec.q.name}` : sym;
+    if (!rec) { $(prefix + "-quote").innerHTML = `${badge("UNAVAILABLE")} <span class="muted">${esc(err || "No quote")}</span>`; $(prefix + "-qtime").textContent = ""; return; }
+    const q = rec.q, s = S.sessionAt(new Date()), [status, reason] = S.quoteStatus(q.day, s, rec.rt, q.quoteTs, Date.now());
+    $(prefix + "-quote").className = "quote";
+    $(prefix + "-quote").innerHTML = `<span class="px">${fmt(q.last)}</span><span class="chg ${cls(q.change)}">${q.change > 0 ? "+" : ""}${fmt(q.change)} (${pct(q.changePct, 2, true)})</span>${badge(status, reason)}${err ? `<span class="badge b-STALE" title="${esc(err)}">refresh failed</span>` : ""}`;
+    $(prefix + "-qtime").textContent = q.quoteTs ? `last quote ${new Date(q.quoteTs).toLocaleString()}` : `trading day ${q.day}`;
+    $(prefix + "-qkv").innerHTML = kv([["Provider", `${P.name}, through your claude.ai connector`], ["Tool", P.quote], ["Exchange", q.exchange], ["Trading day", q.day],
+      ["Last quote (provider time)", q.quoteTs ? new Date(q.quoteTs).toLocaleString() : "not reported"], ["Fetched", new Date(rec.at).toLocaleString()], ["Session", s.session],
+      ["Open / high / low", `${fmt(q.open)} / ${fmt(q.high)} / ${fmt(q.low)}`], ["Volume", ok(q.volume) ? q.volume.toLocaleString() : "—"], ["Previous close", fmt(q.prevClose)],
+      ["Status", `${status}: ${reason}`], ["Method", q.quoteTs ? "Regular hours: LIVE when the provider's last quote is at most 2 minutes old, DELAYED up to 20 minutes, STALE beyond. Otherwise the last session's close." : "Alpha Vantage reports the trading day but no trade time, so LIVE needs an accepted real-time entitlement during regular hours."]]);
+  }
+
+  // ---------- charts ----------
+  const charts = {};
+  function palette() { const cs = getComputedStyle(document.documentElement), v = (n) => cs.getPropertyValue(n).trim(); return { bg: v("--panel"), fg: v("--muted"), line: v("--line"), up: v("--up"), down: v("--down"), accent: v("--accent"), warn: v("--warn"), muted: v("--muted") }; }
+  function makeChart(id) {
+    if (charts[id]) { charts[id].remove(); delete charts[id]; }
+    const el = $(id); if (!window.LightweightCharts) { el.innerHTML = '<p class="note">The chart library did not load; the numbers are still current.</p>'; return null; }
+    el.innerHTML = "";
+    const p = palette(), c = LightweightCharts.createChart(el, { autoSize: true, layout: { background: { type: "solid", color: p.bg }, textColor: p.fg, fontSize: 11 },
       grid: { vertLines: { color: p.line + "66" }, horzLines: { color: p.line + "66" } }, rightPriceScale: { borderColor: p.line }, timeScale: { borderColor: p.line },
       handleScale: { pinch: true, mouseWheel: true, axisPressedMouseMove: true }, handleScroll: { horzTouchDrag: true, vertTouchDrag: false } });
-    series = { c: chart.addCandlestickSeries({ upColor: p.up, downColor: p.down, borderVisible: false, wickUpColor: p.up, wickDownColor: p.down }),
-      s50: chart.addLineSeries({ color: p.accent, lineWidth: 1, priceLineVisible: false, lastValueVisible: false }),
-      s200: chart.addLineSeries({ color: p.muted, lineWidth: 1, priceLineVisible: false, lastValueVisible: false }) };
-    return true;
+    return (charts[id] = c);
   }
-  function drawChart(bars, x) {
-    if (!ensureChart()) { $("chart").innerHTML = '<p class="note">The chart library did not load; indicators are still current.</p>'; return; }
-    chartBars = bars;
-    series.c.setData(bars.map((b) => ({ time: b.t, open: b.o, high: b.h, low: b.l, close: b.c })));
-    const line = (arr) => bars.map((b, i) => (arr[i] === null ? null : { time: b.t, value: arr[i] })).filter(Boolean);
-    series.s50.setData(line(x.series.sma50)); series.s200.setData(line(x.series.sma200));
-    const n = bars.length; if (n > 260) chart.timeScale().setVisibleLogicalRange({ from: n - 260, to: n + 2 }); else chart.timeScale().fitContent();
-    drawLiveCandle();
-  }
-  function drawLiveCandle() { // today's in-progress candle from the quote, tinted; never part of the indicators
-    const q = st.quote, last = chartBars[chartBars.length - 1];
-    if (!chart || !q || !last || q.symbol && q.symbol.toUpperCase() !== st.symbol || q.day <= last.t || q.open === null) return;
-    const p = palette();
-    try { series.c.update({ time: q.day, open: q.open, high: q.high ?? q.last, low: q.low ?? q.last, close: q.last, color: p.accent + "99", wickColor: p.accent, borderColor: p.accent }); } catch { /* older than last bar */ }
-  }
-
-  // ---------- diagnostics ----------
-  function renderDiag() {
-    kv($("d-kv"), [["Connector", P.server], ["Connected", st.available ? st.available.join(", ") || "none" : "not checked yet"],
-      ["Tools", st.tools ? st.tools.join(", ") || "none listed" : "not checked yet"], ["Limits", P.limits],
-      ["Quote inputs", JSON.stringify(P.quoteArgs(st.symbol, false))], ["Daily inputs", JSON.stringify(P.dailyArgs(st.symbol, false))],
-      ["History depth", st.compactOnly ? "compact (100 sessions)" : "full"], ["Requests this visit", String(st.calls)],
-      ["Recent errors", st.errors.join(" | ") || "none"]]);
-  }
-
-  // ---------- symbol switching ----------
-  function renderChips() {
-    $("chips").innerHTML = st.symbols.map((s) => `<button class="chip" type="button" aria-pressed="${s === st.symbol}" data-s="${esc(s)}">${esc(s)}</button>`).join("");
-    $("chips").querySelectorAll("button").forEach((b) => (b.onclick = () => select(b.dataset.s)));
-  }
-  async function select(sym) {
-    sym = sym.trim().toUpperCase();
-    if (!/^[A-Z][A-Z0-9.\-]{0,11}$/.test(sym)) { banner("Not a ticker", ` "${sym}" isn't a valid US ticker.`); return; }
-    if (!st.symbols.includes(sym)) st.symbols = [...st.symbols, sym].slice(-10);
-    st.symbol = sym; st.quote = null; st.bars = null; const id = ++st.loadId;
-    banner(null); renderChips();
-    $("q-sym").textContent = sym; $("q-time").textContent = ""; $("quote").innerHTML = '<span class="skeleton">Loading…</span>';
-    $("i-meta").textContent = ""; $("c-meta").textContent = "";
-    $("state").innerHTML = '<span class="skeleton">Loading…</span>'; $("ind").innerHTML = '<tr><td class="skeleton">Loading…</td><td></td></tr>';
-    if (!st.mcp) return;
-    const m = st.mem.get(sym);
-    if (m && Date.now() - m.at < REUSE_MS && m.bars && m.quote) { // seen in the last 10 minutes: no new requests
-      Object.assign(st, { quote: m.quote, quoteAt: m.quoteAt, quoteRealtime: m.quoteRealtime, bars: m.bars, compactOnly: m.compactOnly });
-      renderQuote(); renderDaily(); renderDiag();
-      return;
+  function priceChart(id, f, quoteRec, events) {
+    const c = makeChart(id); if (!c) return null;
+    const p = palette(), b = f.bars;
+    const candles = c.addCandlestickSeries({ upColor: p.up, downColor: p.down, borderVisible: false, wickUpColor: p.up, wickDownColor: p.down });
+    candles.setData(f.t.map((t, i) => ({ time: t, open: ok(b.o[i]) ? b.o[i] : b.c[i], high: ok(b.h[i]) ? b.h[i] : b.c[i], low: ok(b.l[i]) ? b.l[i] : b.c[i], close: b.c[i] })));
+    for (const [k, color] of [["sma50", p.accent], ["sma200", p.muted]]) c.addLineSeries({ color, lineWidth: 1, priceLineVisible: false, lastValueVisible: false }).setData(f.t.flatMap((t, i) => (ok(f[k][i]) ? [{ time: t, value: f[k][i] }] : [])));
+    const q = quoteRec && quoteRec.q;
+    if (q && q.day > f.t[f.n - 1] && ok(q.open)) try { candles.update({ time: q.day, open: q.open, high: q.high ?? q.last, low: q.low ?? q.last, close: q.last, color: p.accent + "99", wickColor: p.accent, borderColor: p.accent }); } catch { /* older than last bar */ }
+    if (events) {
+      const M = { bottom: ["belowBar", "arrowUp", p.up, "B"], top: ["aboveBar", "arrowDown", p.down, "T"], bullish_divergence: ["belowBar", "circle", p.accent, ""], bearish_divergence: ["aboveBar", "circle", p.warn, ""], regime_bear_capitulation: ["belowBar", "square", p.down, "C"], regime_distribution: ["aboveBar", "square", p.warn, "D"] };
+      candles.setMarkers(events.filter((e) => M[e.type]).map((e) => ({ time: e.date, position: M[e.type][0], shape: M[e.type][1], color: M[e.type][2], text: M[e.type][3] })));
     }
-    await loadQuote(id); // sequential: the first call asks for consent once
-    await learnSchemas();
-    if (id === st.loadId) await loadDaily(id);
-    renderDiag();
+    c.timeScale().setVisibleLogicalRange({ from: Math.max(0, f.n - 260), to: f.n + 2 });
+    return c;
   }
 
-  // ---------- boot ----------
-  $("find").onsubmit = (e) => { e.preventDefault(); const v = $("ticker").value; if (v.trim()) { select(v); $("ticker").value = ""; } };
-  $("refresh").onclick = () => { if (!st.mcp) return; banner(null); loadQuote(st.loadId).then(() => !st.bars && loadDaily(st.loadId)); };
-  $("auto").onchange = () => {
-    clearInterval(st.timer); st.timer = null;
-    if ($("auto").checked) st.timer = setInterval(() => { if (document.visibilityState === "visible" && SMBT.sessionAt(new Date()).session === "regular") loadQuote(st.loadId); }, 60000);
+  // ---------- dashboard ----------
+  const SIDE_N = { bottom: Q.BOTTOM.length, top: Q.TOP.length };
+  async function showDashboard() {
+    const sym = st.market;
+    $("mk-chips").innerHTML = MARKETS.map((s) => `<button class="chip" type="button" aria-pressed="${s === sym}" data-s="${s}">${s}</button>`).join("");
+    $("mk-chips").querySelectorAll("button").forEach((b) => (b.onclick = () => { st.market = b.dataset.s; showDashboard(); }));
+    $("mk-sym").textContent = sym;
+    if (!st.mcp) return;
+    const [qr, dr] = await Promise.allSettled([getQuote(sym), getDaily(sym)]);
+    if (st.market !== sym || st.tab !== "dashboard") return;
+    renderQuote("mk", sym, qr.value || st.quotes.get(sym), qr.reason && qr.reason.message);
+    if (dr.status !== "fulfilled") { $("mk-cards").innerHTML = `<div class="msg err" style="grid-column:1/-1">${esc(dr.reason.message || "No history")}</div>`; return; }
+    $("mk-cards").innerHTML = '<span class="skeleton">Computing…</span>'; await nextFrame();
+    const fr = frameFor(sym), { f, sf } = fr, L = f.n - 1, [ds, dreason] = dailyStatus(f);
+    fr.prob = fr.prob || Q.scoreProbabilities(sf, f.close);
+    fr.events = fr.events || Q.signalEvents(f, sf);
+    const avail = (side) => Q.explain(sf, L, side).components.filter((c) => c.available).length;
+    const reg = sf.regime[L], gauge = (v, color) => `<div class="gauge"><i style="width:${ok(v) ? v : 0}%;background:${color}"></i></div>`;
+    const card = (id, lab, val, sub, status = ds, reason = dreason) => `<button class="card" type="button" data-card="${id}" aria-expanded="false"><span class="lab">${esc(lab)}</span>${val}<span class="sub">${sub}</span><span>${badge(status, reason)} <span class="sub">${esc(f.t[L])}</span></span></button>`;
+    const na = (id, lab, why) => card(id, lab, '<span class="val txt muted">Unavailable</span>', esc(why), "UNAVAILABLE", why);
+    $("mk-cards").innerHTML = [
+      card("regime", "Market regime", `<span class="val txt r-${reg}">${esc(Q.REGIMES[reg] || "Unavailable")}</span>`, "price-based rules"),
+      card("bottom", "Bottom opportunity", `<span class="val">${fmt(sf.bottom[L], 0)}</span>${gauge(sf.bottom[L], "var(--up)")}`, `coverage ${avail("bottom")} of ${SIDE_N.bottom} inputs`),
+      card("top", "Top risk", `<span class="val">${fmt(sf.top[L], 0)}</span>${gauge(sf.top[L], "var(--down)")}`, `coverage ${avail("top")} of ${SIDE_N.top} inputs`),
+      card("trend", "Trend confidence", `<span class="val">${fmt(sf.trend[L], 0)}</span>${gauge(sf.trend[L], "var(--accent)")}`, `direction ${sf.trend_dir[L]}`),
+      na("vix", "VIX", "No index data source on this page"), na("breadth", "S&P 500 breadth", "Needs every member's history"),
+      na("sentiment", "Fear & Greed", "Needs VIX, breadth and credit data"), na("macro", "Macro risk", "No FRED connector"),
+    ].join("");
+    $("mk-cards").querySelectorAll("[data-card]").forEach((b) => (b.onclick = () => {
+      const open = b.getAttribute("aria-expanded") !== "true";
+      $("mk-cards").querySelectorAll("[data-card]").forEach((x) => x.setAttribute("aria-expanded", "false"));
+      b.setAttribute("aria-expanded", String(open)); cardDetail(open ? b.dataset.card : null, fr);
+    }));
+    cardDetail(null);
+    renderVerdict(sym, fr);
+    const drivers = (side) => `<ul class="drivers">${Q.explain(sf, L, side).components.filter((c) => c.available).slice(0, 7).map((c) => `<li><span title="${esc(c.detail)}">${esc(c.label)}</span><span class="gauge"><i style="width:${c.value * 100}%;background:${side === "top" ? "var(--down)" : "var(--up)"}"></i></span><span class="n">${fmt(c.value, 2)}</span></li>`).join("")}</ul>`;
+    $("mk-drivers").className = ""; $("mk-drivers").innerHTML = `<div class="note" style="margin:0 0 4px">Top risk</div>${drivers("top")}<div class="note" style="margin:10px 0 4px">Bottom opportunity</div>${drivers("bottom")}`;
+    renderProb(fr.prob);
+    $("mk-cmeta").textContent = `${f.n} sessions · ${P.name}`;
+    const c = priceChart("mk-chart", f, st.quotes.get(sym), fr.events);
+    $("mk-event").innerHTML = "";
+    if (c) c.subscribeClick((param) => {
+      const tm = param.time, d = typeof tm === "string" ? tm : tm && tm.year ? `${tm.year}-${String(tm.month).padStart(2, "0")}-${String(tm.day).padStart(2, "0")}` : null;
+      const e = d && fr.events.filter((x) => x.date === d);
+      $("mk-event").innerHTML = e && e.length ? e.map((x) => `<div class="msg" style="margin-top:8px"><b>${esc(x.label)} · ${esc(x.date)}</b>${(x.triggered_by || []).map((t) => `${esc(t.label)}${ok(t.value) ? ` ${fmt(t.value, 2)}` : Array.isArray(t.value) ? ` ${t.value.map((v) => fmt(v, 2)).join(" → ")}` : ""}`).join(" · ")}<div class="note">What happened next (evaluation only): ${Object.entries(x.forward_realized).map(([h, v]) => `${h}d <span class="${cls(v)}">${pct(v, 1, true)}</span>`).join(" · ")}</div></div>`).join("") : "";
+    });
+  }
+  function cardDetail(id, fr) {
+    const el = $("mk-detail");
+    if (!id) { el.hidden = true; return; }
+    const { f, sf } = fr, L = f.n - 1; el.hidden = false;
+    if (id === "regime") el.innerHTML = `<h2>Market regime</h2><ul class="why">${Q.regimeReasons(f, L).map((r) => `<li>${esc(r)}</li>`).join("")}</ul><p class="note">Rules on trend, 200-day slope, drawdown and RSI. VIX and breadth conditions are skipped here (no source).</p>`;
+    else if (id === "bottom" || id === "top") {
+      const ex = Q.explain(sf, L, id);
+      el.innerHTML = `<h2>${id === "bottom" ? "Bottom opportunity" : "Top risk"} components <span class="meta">heuristic · weights by regime (${esc(ex.regime)})</span></h2><ul class="drivers">${ex.components.map((c) => `<li class="${c.available ? "" : "muted"}"><span title="${esc(c.detail)}">${esc(c.label)} <span class="muted">· ${esc(c.category)}</span></span><span class="gauge"><i style="width:${(c.value || 0) * 100}%;background:${id === "top" ? "var(--down)" : "var(--up)"}"></i></span><span class="n">${c.available ? fmt(c.value, 2) : "n/a"}</span></li>`).join("")}</ul><p class="note">Each component is 0–1 (point-in-time percentile or a recent flag). Categories without data are dropped and the weights renormalised; the score is withheld below 25% coverage.</p>`;
+    } else if (id === "trend") el.innerHTML = `<h2>Trend confidence parts</h2>${table([["Part"], ["Value", 1]], Object.entries(sf.tc).map(([k, v]) => [esc(k.replace("_", " ")), fmt(v[L], 2)]))}`;
+    else el.innerHTML = `<h2>${esc(id)}</h2><p>Not available on this page. See Data sources.</p>`;
+  }
+  function renderVerdict(sym, fr) {
+    const { f, sf } = fr, L = f.n - 1, bs = sf.bottom[L], ts = sf.top[L], el = $("mk-verdict");
+    const b60 = fr.prob.bottom.find((p) => p.horizon === 60 && p.available), t126 = fr.prob.top.find((p) => p.horizon === 126 && p.available);
+    const tone = ok(bs) && ok(ts) ? (bs - ts >= 25 ? "up" : ts - bs >= 25 ? "down" : "muted") : "muted";
+    const head = tone === "up" ? "Conditions resemble historically attractive entry zones" : tone === "down" ? "Conditions resemble historically risky environments" : "No strong alignment between bottom and top evidence";
+    const skill = (p) => p && p.oos && p.oos.brier_skill;
+    el.hidden = false;
+    el.innerHTML = `<h2>Bottom line <span class="meta">${esc(sym)} · closes through ${esc(f.t[L])}</span></h2><p class="big ${tone}" style="margin:0">${head}</p><ul class="why">
+      <li>Regime: <b>${esc(Q.REGIMES[sf.regime[L]] || "—")}</b>. Bottom opportunity <b>${fmt(bs, 0)}</b>/100, top risk <b>${fmt(ts, 0)}</b>/100 (heuristic scores from price-based inputs, not probabilities).</li>
+      ${b60 && ok(b60.probability) ? `<li>Past days in today's bottom-score bucket (${b60.bucket.join("–")}) had a positive 60-session return <b>${pct(b60.probability, 0)}</b> of the time vs a ${pct(b60.base_rate, 0)} base rate (${b60.episodes} episodes${b60.sufficient ? "" : ", too few to rely on"}).${ok(skill(b60)) ? ` <span class="${skill(b60) > 0 ? "up" : "warn"}">Out of sample this ${skill(b60) > 0 ? "beat" : "did not beat"} the base rate (Brier skill ${fmt(skill(b60), 3)}).</span>` : ""}</li>` : ""}
+      ${t126 && ok(t126.probability) ? `<li>A 10%+ decline within 126 sessions followed <b>${pct(t126.probability, 0)}</b> of past days in today's top-risk bucket (base rate ${pct(t126.base_rate, 0)}, ${t126.episodes} episodes).${ok(skill(t126)) ? ` <span class="${skill(t126) > 0 ? "up" : "warn"}">OOS Brier skill ${fmt(skill(t126), 3)}.</span>` : ""}</li>` : ""}</ul>`;
+  }
+  function renderProb(prob) {
+    const rows = [...prob.bottom.map((r) => ["Bottom", r]), ...prob.top.map((r) => ["Top", r])].map(([side, r]) => [side, r.event === "positive_return" ? `Positive ${r.horizon}d return` : `≥10% drop within ${r.horizon}d`,
+      r.bucket ? r.bucket.join("–") : "—", r.available ? `<b>${pct(r.probability, 0)}</b>` : "n/a", pct(r.base_rate, 0), `${r.episodes ?? "—"}${r.available && !r.sufficient ? ' <span class="warn">thin</span>' : ""}`,
+      r.ci95 ? `${pct(r.ci95[0], 0)}–${pct(r.ci95[1], 0)}` : "—", `<span class="${cls(r.oos && r.oos.brier_skill)}">${fmt(r.oos && r.oos.brier_skill, 3)}</span>`]);
+    $("mk-prob").innerHTML = table([["Score"], ["Event"], ["Bucket"], ["Frequency", 1], ["Base rate", 1], ["Episodes", 1], ["95% CI", 1], ["OOS Brier skill", 1]], rows);
+  }
+
+  // ---------- analyze ----------
+  async function showAnalyze(force = false) {
+    const sym = st.symbol;
+    $("an-chips").innerHTML = st.watch.map((s) => `<button class="chip" type="button" aria-pressed="${s === sym}" data-s="${esc(s)}">${esc(s)}</button>`).join("");
+    $("an-chips").querySelectorAll("button").forEach((b) => (b.onclick = () => { st.symbol = b.dataset.s; showAnalyze(); }));
+    $("an-sym").textContent = sym;
+    if (!st.mcp) return;
+    if (!st.quotes.has(sym) || force) { $("an-quote").innerHTML = '<span class="skeleton">Loading…</span>'; }
+    const [qr, dr] = await Promise.allSettled([getQuote(sym, force), getDaily(sym, force && !st.daily.has(sym))]);
+    if (st.symbol !== sym || st.tab !== "analyze") return;
+    renderQuote("an", sym, qr.value || st.quotes.get(sym), qr.reason && qr.reason.message);
+    if (dr.status !== "fulfilled") { const m = esc(dr.reason.message || "No history"); $("an-state").innerHTML = `${badge("UNAVAILABLE")} <span class="muted">${m}</span>`; $("an-ind").innerHTML = `<tr><td class="muted">${m}</td><td></td></tr>`; return; }
+    await nextFrame();
+    const fr = frameFor(sym), { f } = fr, L = f.n - 1, [ds, dreason] = dailyStatus(f);
+    fr.state = fr.state || Q.stateStats(f);
+    const s = fr.state;
+    $("an-state").className = "";
+    $("an-state").innerHTML = `<div class="big s-${s.state}">${esc(s.label)}</div><ul class="why">${s.reasons.map((r) => `<li>${esc(r)}</li>`).join("")}</ul>`
+      + `<p class="note" style="margin-top:10px">After past occurrences of this state on ${esc(sym)} (confirmed closes):</p>`
+      + table([["Horizon"], ["Samples", 1], ["Median", 1], ["Hit rate", 1], ["All days", 1]], Object.entries(s.stats).map(([h, v]) => [`${h} sessions`, v.n_samples, `<span class="${cls(v.median)}">${pct(v.median, 1, true)}</span>`, pct(v.hit_rate, 0), `${pct(v.unconditional_median, 1, true)} / ${pct(v.unconditional_hit_rate, 0)}`]))
+      + `<p class="note">Same rules as the SMBT server's Analyze page, without its relative-strength input. Consecutive days overlap, so samples overstate independent evidence.${fr.compact ? " Only the last 100 sessions loaded: tick Full history if your Alpha Vantage key is premium." : ""}</p>`;
+    $("an-imeta").innerHTML = `${badge(ds, dreason)} closes through ${esc(f.t[L])}`;
+    const rows = [["Close", fmt(f.close[L])], ["RSI (14)", fmt(f.rsi14[L], 1)], ["50-day average", fmt(f.sma50[L])], ["200-day average", fmt(f.sma200[L])], ["Distance from 200-day", pct(f.dist200[L], 1, true)],
+      ["200-day slope (20 sessions)", pct(f.sma200_slope[L], 2, true)], ["Drawdown from 52-week high", pct(f.drawdown[L], 1)], ["20-day return", pct(f.roc20[L], 1, true)], ["63-day return", pct(f.roc63[L], 1, true)],
+      ["MACD histogram", fmt(f.macd_hist[L], 3)], ["Stoch RSI %K", fmt(f.stochrsi_k[L], 0)], ["ADX", fmt(f.adx[L], 1)], ["ATR % of price", pct(f.atr_pct[L], 2)], ["Bollinger %B", fmt(f.bb_pctb[L])],
+      ["Volatility (20-day, annualised)", pct(f.hv20[L], 1)], ["Volume vs 50-day average", ok(f.vol_ratio[L]) ? fmt(f.vol_ratio[L]) + "×" : "—"], ["Trend R² (63-day)", fmt(f.r2_63[L], 2)]];
+    $("an-ind").innerHTML = rows.map(([k, v]) => `<tr><td>${esc(k)}</td><td class="n">${esc(v)}</td></tr>`).join("");
+    $("an-cmeta").textContent = `${f.n} sessions · ${f.t[0]} → ${f.t[L]}`;
+    priceChart("an-chart", f, st.quotes.get(sym));
+  }
+
+  // ---------- charts tab ----------
+  const IND = { rsi14: "RSI(14)", macd_hist: "MACD histogram", stochrsi_k: "Stoch RSI %K", bb_pctb: "Bollinger %B", adx: "ADX", atr_pct: "ATR %", hv20: "Volatility 20d", drawdown: "Drawdown",
+    dist200: "Distance from 200d", obv_slope20: "OBV slope 20d", vol_ratio: "Volume ratio", r2_63: "Trend R²", bottom: "Bottom score", top: "Top risk", trend: "Trend confidence" };
+  let picks = ["bottom", "top", "rsi14"];
+  async function showCharts() {
+    const syms = [...new Set([...MARKETS, ...st.watch])], sym = syms.includes(st.chartSym) ? st.chartSym : st.symbol;
+    st.chartSym = sym;
+    $("ch-syms").innerHTML = syms.map((s) => `<button class="chip" type="button" aria-pressed="${s === sym}" data-s="${esc(s)}">${esc(s)}</button>`).join("");
+    $("ch-syms").querySelectorAll("button").forEach((b) => (b.onclick = () => { st.chartSym = b.dataset.s; showCharts(); }));
+    $("ch-picks").innerHTML = Object.entries(IND).map(([k, v]) => `<button class="chip" type="button" aria-pressed="${picks.includes(k)}" data-k="${k}">${esc(v)}</button>`).join("");
+    $("ch-picks").querySelectorAll("button").forEach((b) => (b.onclick = () => { const k = b.dataset.k; picks = picks.includes(k) ? picks.filter((x) => x !== k) : [...picks, k].slice(-4); showCharts(); }));
+    if (!st.mcp) return;
+    $("ch-title").textContent = sym;
+    let fr; try { await getDaily(sym); fr = frameFor(sym); } catch (e) { $("ch-panes").innerHTML = `<div class="msg err">${esc(e.message)}</div>`; return; }
+    if (st.tab !== "charts" || st.chartSym !== sym) return;
+    const { f, sf } = fr, p = palette(), panes = [["close", "Close"], ...picks.map((k) => [k, IND[k]])];
+    $("ch-meta").textContent = `${f.n} sessions · closes through ${f.t[f.n - 1]}`;
+    $("ch-panes").innerHTML = panes.map(([k, lab], i) => `<div class="note" style="margin:${i ? 10 : 0}px 0 2px">${esc(lab)}</div><div class="chart ${i ? "small" : ""}" id="ch-${k}"></div>`).join("");
+    const made = panes.map(([k]) => {
+      const c = makeChart("ch-" + k); if (!c) return null;
+      const src = k in sf && Array.isArray(sf[k]) ? sf[k] : f[k];
+      c.addLineSeries({ color: k === "close" ? p.fg : k === "top" ? p.down : k === "bottom" ? p.up : p.accent, lineWidth: 1, priceLineVisible: false }).setData(f.t.flatMap((t, i) => (ok(src[i]) ? [{ time: t, value: src[i] }] : [])));
+      return c;
+    }).filter(Boolean);
+    let syncing = false;
+    made.forEach((c) => c.timeScale().subscribeVisibleLogicalRangeChange((r) => { if (syncing || !r) return; syncing = true; made.forEach((o) => o !== c && o.timeScale().setVisibleLogicalRange(r)); syncing = false; }));
+    if (made[0]) made[0].timeScale().setVisibleLogicalRange({ from: Math.max(0, f.n - 500), to: f.n + 2 });
+  }
+
+  // ---------- scanner ----------
+  function showScanner() {
+    $("sc-flag").innerHTML = '<option value="">all</option>' + Object.entries(Q.FLAGS).filter(([, v]) => v[1] === $("sc-dir").value).map(([k, v]) => `<option value="${k}">${esc(v[0])}</option>`).join("");
+    renderScan();
+  }
+  async function runScan() {
+    if (st.scanning || !st.mcp) return;
+    st.scanning = true; $("sc-run").disabled = true; $("sc-prog").hidden = false;
+    const results = [], skipped = [];
+    try {
+      for (let i = 0; i < UNIVERSE.length; i++) {
+        const sym = UNIVERSE[i];
+        $("sc-status").textContent = `Loading ${sym} (${i + 1} of ${UNIVERSE.length})…`;
+        try { await getDaily(sym); } catch (e) { skipped.push(`${sym}: ${e.message}`); }
+        $("sc-prog").firstElementChild.style.width = `${((i + 1) / UNIVERSE.length) * 100}%`;
+      }
+      await nextFrame();
+      for (const sym of UNIVERSE) if (st.daily.has(sym)) { const fr = frameFor(sym, sym === "SPY" ? null : "SPY"); if (fr.f.n >= 260) results.push(Q.scanSymbol(sym, fr.f)); else skipped.push(`${sym}: only ${fr.f.n} sessions`); }
+      st.scan = { ...Q.scanSummary(results), skipped, at: new Date() };
+      $("sc-status").textContent = `Scanned ${results.length} of ${UNIVERSE.length} at ${st.scan.at.toLocaleTimeString()}${skipped.length ? ` · skipped ${skipped.length}` : ""}. Confirmed closes; benchmark for relative strength: SPY.`;
+    } finally { st.scanning = false; $("sc-run").disabled = false; $("sc-prog").hidden = true; renderScan(); }
+  }
+  function renderScan() {
+    const sc = st.scan; if (!sc) { $("sc-table").innerHTML = '<span class="skeleton">No scan yet.</span>'; return; }
+    const dir = $("sc-dir").value, flag = $("sc-flag").value;
+    const rows = sc.rows.filter((r) => !flag || r.flags.includes(flag)).sort((a, b) => b[dir + "_confluence"] - a[dir + "_confluence"] || b[dir + "_evidence"] - a[dir + "_evidence"] || (a.symbol < b.symbol ? -1 : 1));
+    $("sc-table").innerHTML = table([["Symbol"], ["Setups"], ["Confluence", 1], ["Evidence", 1], ["RSI", 1], ["vs 200d", 1], ["Drawdown", 1], ["RS 63d", 1], ["Vol×", 1], ["As of"]],
+      rows.map((r) => [`<b>${esc(r.symbol)}</b>`, r.flags.map((x) => `<span class="pill ${Q.FLAGS[x][1]}">${esc(Q.FLAGS[x][0])}</span>`).join("") || '<span class="muted">—</span>', r[dir + "_confluence"], fmt(r[dir + "_evidence"], 2), fmt(r.rsi14, 0),
+        `<span class="${cls(r.dist200)}">${pct(r.dist200, 1, true)}</span>`, pct(r.drawdown, 0), `<span class="${cls(r.rs63)}">${pct(r.rs63, 1, true)}</span>`, fmt(r.vol_ratio, 1), esc(r.as_of)]), (i) => `class="click" data-s="${esc(rows[i].symbol)}"`)
+      + (sc.skipped.length ? `<p class="note">Skipped: ${esc(sc.skipped.join(" · "))}</p>` : "");
+    $("sc-table").querySelectorAll("tr[data-s]").forEach((tr) => (tr.onclick = () => openAnalyze(tr.dataset.s)));
+    $("sc-evidence").innerHTML = table([["Setup"], ["Side"], ["Past onsets", 1], ["Mean excess 20-bar", 1], ["Beat own avg", 1], ["t-stat", 1]],
+      Object.values(sc.flag_evidence).map((v) => [esc(v.label), v.direction, v.n, `<span class="${cls(v.direction === "bearish" ? -v.excess_mean : v.excess_mean)}">${pct(v.excess_mean, 2, true)}</span>`, pct(v.excess_hit_rate, 0), fmt(v.t_stat, 2)]));
+  }
+
+  // ---------- validate ----------
+  function showValidate() {
+    const syms = [...new Set([...MARKETS, ...st.watch])];
+    const cur = $("va-sym").value || st.market;
+    $("va-sym").innerHTML = syms.map((s) => `<option${s === cur ? " selected" : ""}>${esc(s)}</option>`).join("");
+    if (!$("va-strat").options.length) $("va-strat").innerHTML = Object.entries(Q.STRATEGIES).filter(([k]) => k !== "buy_hold").map(([k, v]) => `<option value="${k}">${esc(v.name)}</option>`).join("");
+  }
+  const mrow = (label, m, b) => [label, `<span class="${cls(m.cagr - (b ? b.cagr : 0))}">${pct(m.cagr, 1)}</span>`, b ? pct(b.cagr, 1) : "", fmt(m.sharpe, 2), b ? fmt(b.sharpe, 2) : "", pct(m.max_drawdown, 0), b ? pct(b.max_drawdown, 0) : ""];
+  async function runValidate() {
+    const sym = $("va-sym").value, id = $("va-strat").value, out = $("va-out");
+    out.innerHTML = '<span class="skeleton">Loading history…</span>';
+    let fr; try { await getDaily(sym); fr = frameFor(sym); } catch (e) { out.innerHTML = `<div class="msg err">${esc(e.message)}</div>`; return; }
+    out.innerHTML = '<span class="skeleton">Running walk-forward and purged cross-validation…</span>'; await nextFrame();
+    const r = Q.walkForward(fr.f, fr.sf, id);
+    if (r.error) { out.innerHTML = `<div class="msg err">${esc(r.error)}</div>`; return; }
+    const cv = Q.purgedCv(fr.f, fr.sf, id), d = r.oos_vs_benchmark;
+    out.innerHTML = `<p style="margin:0 0 6px">${esc(r.description)}</p>`
+      + table([["Out of sample " + r.oos_period.join(" → ")], ["CAGR", 1], ["Buy & hold", 1], ["Sharpe", 1], ["B&H", 1], ["Max DD", 1], ["B&H", 1]], [mrow("Strategy", r.oos, r.oos_benchmark)])
+      + `<p class="note">Sharpe difference vs buy &amp; hold ${fmt(d.sharpe_diff, 2)} (95% CI ${d.sharpe_diff_ci95 ? d.sharpe_diff_ci95.map((x) => fmt(x, 2)).join(" to ") : "—"}; paired block bootstrap). Exposure ${pct(r.oos.exposure, 0)}, ${r.oos.trades ?? 0} trades, win rate ${pct(r.oos.win_rate, 0)}. ${d.sharpe_diff_ci95 && d.sharpe_diff_ci95[0] < 0 && d.sharpe_diff_ci95[1] > 0 ? "The interval includes zero: no measurable edge over buy & hold." : ""}</p>`
+      + `<div class="chart small" id="va-eq"></div>`
+      + `<p class="note" style="margin-top:10px">Walk-forward folds (parameters chosen on the training window only):</p>`
+      + table([["Test period"], ["Chosen params"], ["Train Sharpe", 1], ["Test CAGR", 1], ["B&H", 1]], r.folds.map((x) => [x.test.join(" → "), esc(Object.entries(x.chosen_params).map(([k, v]) => `${k} ${v}`).join(", ") || "—"), fmt(x.train_sharpe, 2), pct(x.test_metrics.cagr, 1), pct(x.test_benchmark.cagr, 1)]))
+      + `<p class="note" style="margin-top:10px">By market state (benchmark above/below its 200-day): ${Object.entries(r.oos_by_market_state).map(([k, v]) => `${k}: ${v.ann_return !== undefined ? `${pct(v.ann_return, 1)} vs ${pct(v.bench_ann_return, 1)}` : `${v.n_days} days`}`).join(" · ")}</p>`
+      + (cv.error ? "" : `<p class="note">Purged 5-fold CV: strategy beat buy &amp; hold on Sharpe in ${pct(cv.share_folds_beating_benchmark, 0)} of folds (${cv.folds.map((x) => (x.beat_benchmark_sharpe ? "✓" : "✗")).join(" ")}).</p>`)
+      + `<p class="note">Costs ${r.assumptions.cost_bps_per_side} bps per side, execution at the ${r.assumptions.execution.replace("_", " ")}, cash earns ${r.assumptions.cash_yield}. In-sample with default parameters: CAGR ${pct(r.in_sample_defaults.metrics.cagr, 1)}, Sharpe ${fmt(r.in_sample_defaults.metrics.sharpe, 2)} — ${esc(r.in_sample_defaults.warning)}</p>`;
+    const c = makeChart("va-eq"), p = palette();
+    if (c) { c.addLineSeries({ color: p.accent, lineWidth: 2, priceLineVisible: false }).setData(r.equity.map((x) => ({ time: x.t, value: x.equity }))); c.addLineSeries({ color: p.muted, lineWidth: 1, priceLineVisible: false }).setData(r.equity.map((x) => ({ time: x.t, value: x.bench_equity }))); c.timeScale().fitContent(); }
+  }
+  async function runScoreboard() {
+    const sym = $("va-sym").value, out = $("va-sbout");
+    out.innerHTML = '<span class="skeleton">Loading…</span>';
+    let fr; try { await getDaily(sym); fr = frameFor(sym); } catch (e) { out.innerHTML = `<div class="msg err">${esc(e.message)}</div>`; return; }
+    out.innerHTML = '<span class="skeleton">Running event studies…</span>'; await nextFrame();
+    fr.board = fr.board || Q.signalScoreboard(fr.f, fr.sf);
+    $("va-sbmeta").textContent = `${sym} · 60-session forward, next-open entry`;
+    out.innerHTML = table([["Signal"], ["Events", 1], ["Median", 1], ["Hit", 1], ["Base", 1], ["Excess", 1], ["p", 1], ["q (FDR)", 1], ["Now"]], fr.board.map((r) => [esc(r.label), r.n_events, pct(r.median, 1, true), pct(r.hit_rate, 0), pct(r.baseline_hit_rate, 0),
+      `<span class="${cls(r.direction === "bearish" ? -r.excess_mean : r.excess_mean)}">${pct(r.excess_mean, 2, true)}</span>`, fmt(r.p_value, 3), `<b class="${r.significant_after_fdr ? "up" : ""}">${fmt(r.q_value, 3)}</b>`, r.active_now ? '<span class="pill bullish">active</span>' : ""]), (i) => `class="click" data-sig="${fr.board[i].signal}"`)
+      + '<p class="note">p = share of random same-size entry sets that did at least as well (one-sided). q = Benjamini–Hochberg across all signals; "robust" needs q &lt; 0.10. Tap a row for the full report.</p>';
+    out.querySelectorAll("tr[data-sig]").forEach((tr) => (tr.onclick = async () => {
+      $("va-report").innerHTML = '<span class="skeleton">Running…</span>'; await nextFrame();
+      const rep = Q.signalReport(fr.f, fr.sf, tr.dataset.sig), tp = rep.turning_points;
+      $("va-report").innerHTML = `<h2 style="margin-top:12px">${esc(rep.label)} <span class="meta">${rep.direction} · ${rep.event_study.n_events} events</span></h2>`
+        + table([["Horizon"], ["n", 1], ["Median", 1], ["Hit", 1], ["Excess mean", 1], ["p vs random", 1], ["Worst dip (median)", 1]], Object.entries(rep.event_study.horizons).map(([h, v]) => [`${h}d`, v.n, pct(v.median, 1, true), pct(v.hit_rate, 0), pct(v.excess_mean, 2, true), fmt(v.p_value_vs_random, 3), pct(v.mae_median, 1)]))
+        + `<p class="note">Turning points (10% swings, graded after the fact): precision ${pct(tp.precision, 0)}, recall ${pct(tp.recall, 0)}, ${tp.pivots} pivots, median lag ${tp.median_lag_sessions ?? "—"} sessions.</p>`
+        + `<p class="note">By era: ${rep.stability_by_era.map((x) => `${x.period[0].slice(0, 4)}–${x.period[1].slice(0, 4)}: ${x.n_events} events, excess ${pct(x.excess_mean, 1, true)}`).join(" · ")}</p>`;
+    }));
+  }
+
+  // ---------- history (analogs) ----------
+  async function showHistory() {
+    const sym = st.market;
+    $("hi-chips").innerHTML = MARKETS.map((s) => `<button class="chip" type="button" aria-pressed="${s === sym}" data-s="${s}">${s}</button>`).join("");
+    $("hi-chips").querySelectorAll("button").forEach((b) => (b.onclick = () => { st.market = b.dataset.s; showHistory(); }));
+    if (!st.mcp) return;
+    let fr; try { await getDaily(sym); fr = frameFor(sym); } catch (e) { $("hi-matches").innerHTML = `<div class="msg err">${esc(e.message)}</div>`; return; }
+    if (st.tab !== "history" || st.market !== sym) return;
+    $("hi-matches").innerHTML = '<span class="skeleton">Comparing…</span>'; await nextFrame();
+    fr.analogs = fr.analogs || Q.findAnalogs(fr.f); fr.keys = fr.keys || Q.compareKeyDates(fr.f);
+    const a = fr.analogs, H = ["20", "60", "126", "252"];
+    $("hi-meta").textContent = `${sym} · as of ${a.as_of || "—"}`;
+    if (!a.matches.length) { $("hi-matches").innerHTML = `<div class="msg">${esc(a.note || "No matches")}</div>`; return; }
+    $("hi-matches").innerHTML = table([["Date"], ["Similarity", 1], ["Period"], ...H.map((h) => [`+${h}d`, 1]), ["Max dip 126d", 1]], a.matches.map((m) => [esc(m.date), fmt(m.similarity, 3), esc(m.event || ""), ...H.map((h) => `<span class="${cls(m.forward[h])}">${pct(m.forward[h], 1, true)}</span>`), pct(m.forward.max_drawdown_126, 1)]));
+    $("hi-dist").innerHTML = table([["Horizon"], ["Matches median", 1], ["Hit", 1], ["All days median", 1], ["Hit", 1]], H.map((h) => { const d = a.outcome_distribution[h], u = a.unconditional[h]; return [`${h} sessions (n=${d.n})`, pct(d.median, 1, true), pct(d.hit_rate, 0), pct(u.median, 1, true), pct(u.hit_rate, 0)]; }));
+    $("hi-keys").innerHTML = fr.keys.length ? table([["Date"], ["Event"], ["Similarity", 1], ["+60d", 1]], fr.keys.map((k) => [esc(k.date), esc(k.name), fmt(k.similarity, 3), `<span class="${cls(k.forward["60"])}">${pct(k.forward["60"], 1, true)}</span>`])) : '<span class="muted">None of the named turning points fall inside this history.</span>';
+  }
+
+  // ---------- alerts (this visit only) ----------
+  function renderRules() {
+    $("al-rules").className = st.rules.length ? "" : "skeleton";
+    $("al-rules").innerHTML = st.rules.length ? st.rules.map((r, i) => `<div class="bar" style="justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--line)"><span>${esc(r.label)}</span><button class="btn ghost" type="button" data-i="${i}">Remove</button></div>`).join("") : "No alerts yet.";
+    $("al-rules").querySelectorAll("button").forEach((b) => (b.onclick = () => { st.rules.splice(+b.dataset.i, 1); renderRules(); }));
+    $("al-fired").className = st.fired.length ? "" : "skeleton";
+    $("al-fired").innerHTML = st.fired.length ? st.fired.map((x) => `<div style="padding:4px 0;border-bottom:1px solid var(--line)"><b>${esc(x.text)}</b> <span class="muted">${x.at.toLocaleString()}</span></div>`).join("") : "Nothing yet.";
+  }
+  const KIND = { price_above: "Price rises above", price_below: "Price falls below", rsi_below: "RSI(14) falls below", rsi_above: "RSI(14) rises above", bottom_above: "Bottom score rises above", top_above: "Top risk rises above", regime: "Market regime changes" };
+  async function checkAlerts(manual) {
+    if (!st.mcp || !st.rules.length || (!manual && document.visibilityState !== "visible")) return;
+    const open = S.sessionAt(new Date()).session === "regular";
+    for (const sym of [...new Set(st.rules.map((r) => r.sym))]) {
+      const mine = st.rules.filter((r) => r.sym === sym);
+      try {
+        const price = mine.some((r) => r.kind.startsWith("price")) ? (await getQuote(sym, open)).q.last : null;
+        const needDaily = mine.some((r) => !r.kind.startsWith("price"));
+        const fr = needDaily ? (await getDaily(sym), frameFor(sym)) : null, L = fr ? fr.f.n - 1 : 0;
+        for (const r of mine) {
+          const v = { price_above: price, price_below: price, rsi_below: fr && fr.f.rsi14[L], rsi_above: fr && fr.f.rsi14[L], bottom_above: fr && fr.sf.bottom[L], top_above: fr && fr.sf.top[L], regime: fr && fr.sf.regime[L] }[r.kind];
+          if (v === null || v === undefined || (typeof v === "number" && !ok(v))) continue;
+          const on = r.kind === "regime" ? r.last !== undefined && v !== r.last : /above/.test(r.kind) ? v >= r.th : v <= r.th;
+          if (on && r.armed) { r.armed = false; const text = r.kind === "regime" ? `${sym} regime: ${Q.REGIMES[v]} (was ${Q.REGIMES[r.last]})` : `${sym}: ${KIND[r.kind]} ${r.th} (now ${fmt(v, 2)})`; st.fired.unshift({ text, at: new Date() }); toast(text); }
+          if (!on) r.armed = true;
+          if (r.kind === "regime") { r.last = v; r.armed = true; }
+        }
+      } catch (e) { note(`alert check ${sym}: ${e.message}`); }
+    }
+    renderRules();
+  }
+
+  // ---------- AI analyst (sample capability; tools read this page's computed numbers) ----------
+  const r3 = (v) => (ok(v) ? Math.round(v * 1000) / 1000 : null);
+  async function loadFrame(symbol) { const sym = String(symbol || "SPY").trim().toUpperCase(); await getDaily(sym); return [sym, frameFor(sym)]; }
+  const AI_TOOLS = [
+    { name: "get_market_state", description: "Regime, Bottom/Top/Trend scores (heuristic, price-only inputs with coverage), and the empirical score-bucket outcome table for an ETF such as SPY or QQQ. Returns as-of date and provider.",
+      inputSchema: { type: "object", properties: { symbol: { type: "string" } }, required: ["symbol"] },
+      async execute(i) { const [sym, fr] = await loadFrame(i.symbol), { f, sf } = fr, L = f.n - 1; fr.prob = fr.prob || Q.scoreProbabilities(sf, f.close);
+        const q = st.quotes.get(sym);
+        return { symbol: sym, provider: P.name, closes_through: f.t[L], latest_quote: q ? { price: q.q.last, change_pct: r3(q.q.changePct), trading_day: q.q.day } : null, regime: Q.REGIMES[sf.regime[L]], regime_reasons: Q.regimeReasons(f, L),
+          bottom_score: r3(sf.bottom[L]), top_score: r3(sf.top[L]), trend_confidence: r3(sf.trend[L]), trend_direction: sf.trend_dir[L], inputs_missing: "VIX, breadth, sentiment and macro components have no source on this page",
+          bottom_drivers: Q.explain(sf, L, "bottom").components.filter((c) => c.available).slice(0, 5).map((c) => [c.label, c.value]), top_drivers: Q.explain(sf, L, "top").components.filter((c) => c.available).slice(0, 5).map((c) => [c.label, c.value]),
+          outcomes: [...fr.prob.bottom, ...fr.prob.top].filter((r) => r.available).map((r) => ({ event: r.event, horizon: r.horizon, frequency: r3(r.probability), base_rate: r3(r.base_rate), episodes: r.episodes, oos_brier_skill: r3(r.oos.brier_skill) })) }; } },
+    { name: "get_stock_analysis", description: "Stock state (pullback / accumulation / decline / exhaustion), its reasons, forward-return stats after past occurrences of the same state, and key indicators for any ticker.",
+      inputSchema: { type: "object", properties: { symbol: { type: "string" } }, required: ["symbol"] },
+      async execute(i) { const [sym, fr] = await loadFrame(i.symbol), f = fr.f, L = f.n - 1; fr.state = fr.state || Q.stateStats(f);
+        return { symbol: sym, provider: P.name, closes_through: f.t[L], state: fr.state.label, reasons: fr.state.reasons, after_same_state: fr.state.stats,
+          indicators: { close: r3(f.close[L]), rsi14: r3(f.rsi14[L]), dist200: r3(f.dist200[L]), drawdown: r3(f.drawdown[L]), roc63: r3(f.roc63[L]), hv20: r3(f.hv20[L]), adx: r3(f.adx[L]) } }; } },
+    { name: "get_signal_scoreboard", description: "Event-study results for 12 signals on a symbol: events, median 60-session return, hit rate vs base, excess, p-value vs random entries, Benjamini-Hochberg q-value, and whether active now.",
+      inputSchema: { type: "object", properties: { symbol: { type: "string" } }, required: ["symbol"] },
+      async execute(i) { const [sym, fr] = await loadFrame(i.symbol); fr.board = fr.board || Q.signalScoreboard(fr.f, fr.sf);
+        return { symbol: sym, closes_through: fr.f.t[fr.f.n - 1], rows: fr.board.map((r) => ({ signal: r.label, direction: r.direction, events: r.n_events, median: r3(r.median), hit: r3(r.hit_rate), base_hit: r3(r.baseline_hit_rate), excess: r3(r.excess_mean), p: r3(r.p_value), q: r3(r.q_value), active_now: r.active_now })) }; } },
+    { name: "get_historical_analogs", description: "Closest past dates to today's price-based conditions (similarity 0-1) and what followed them, versus all days.",
+      inputSchema: { type: "object", properties: { symbol: { type: "string" } }, required: ["symbol"] },
+      async execute(i) { const [sym, fr] = await loadFrame(i.symbol); fr.analogs = fr.analogs || Q.findAnalogs(fr.f); const a = fr.analogs;
+        return { symbol: sym, as_of: a.as_of, features: a.features_used, matches: a.matches.slice(0, 8).map((m) => ({ date: m.date, similarity: m.similarity, period: m.event, fwd60: r3(m.forward["60"]), fwd252: r3(m.forward["252"]) })),
+          matches_median_60: r3(a.outcome_distribution && a.outcome_distribution["60"].median), all_days_median_60: r3(a.unconditional && a.unconditional["60"].median) }; } },
+    { name: "run_backtest", description: "Walk-forward out-of-sample test of a strategy (trend200, bottom_score, top_overlay, score_overlay, rsi2) vs buy and hold on a symbol, with a bootstrap CI for the Sharpe difference.",
+      inputSchema: { type: "object", properties: { symbol: { type: "string" }, strategy: { type: "string", enum: ["trend200", "bottom_score", "top_overlay", "score_overlay", "rsi2"] } }, required: ["symbol", "strategy"] },
+      async execute(i) { const [sym, fr] = await loadFrame(i.symbol), id = String(i.strategy); if (!Q.STRATEGIES[id]) throw new Error("unknown strategy"); const r = Q.walkForward(fr.f, fr.sf, id); if (r.error) throw new Error(r.error);
+        const pick = (m) => ({ cagr: r3(m.cagr), sharpe: r3(m.sharpe), max_drawdown: r3(m.max_drawdown) });
+        return { symbol: sym, strategy: r.name, oos_period: r.oos_period, strategy_oos: pick(r.oos), buy_hold_oos: pick(r.oos_benchmark), sharpe_diff: r3(r.oos_vs_benchmark.sharpe_diff), sharpe_diff_ci95: (r.oos_vs_benchmark.sharpe_diff_ci95 || []).map(r3) }; } },
+  ];
+  const AI_RULES = `You are SMBT's research analyst inside a market terminal. Answer ONLY from the numbers the tools return; call tools for every symbol you discuss (use ETF proxies such as SPY for the S&P 500; indexes are not available). Rules:
+- Name the as-of date and the provider for the numbers you use.
+- Keep three kinds of evidence separate: heuristic scores (not probabilities), empirical frequencies (with episodes and out-of-sample Brier skill), and historical similarity (context, not odds).
+- Give the bull case and the bear case, then a short balanced conclusion. Say when evidence is thin, when q-values are not significant, or when a backtest's interval includes zero.
+- These scores use price-based inputs only on this page (no VIX, breadth or macro); say so when it matters.
+- No price targets, no instructions to trade. This is research, not investment advice. Keep it under 250 words.`;
+  async function askAnalyst(text) {
+    const log = $("ai-log");
+    log.insertAdjacentHTML("beforeend", `<div class="bubble user">${esc(text)}</div><div class="bubble ai" id="ai-cur">Thinking…</div>`);
+    const cur = $("ai-cur"); cur.removeAttribute("id");
+    st.ai.push({ role: "user", content: text });
+    st.aiCtl = new AbortController(); $("ai-send").disabled = true; $("ai-stop").hidden = false;
+    try {
+      const turns = [{ role: "user", content: AI_RULES }, { role: "assistant", content: "Understood. I will use only tool results." }, ...st.ai.slice(-9)]; // odd count: history always starts on a user turn
+      const tools = AI_TOOLS.map((t) => ({ ...t, execute: async (inp, ctx) => { cur.textContent = `Looking up ${t.name.replace(/_/g, " ")}${inp.symbol ? ` for ${String(inp.symbol).toUpperCase()}` : ""}…`; try { return await t.execute(inp, ctx); } catch (e) { throw new Error(e.message || "lookup failed"); } } }));
+      const { text: answer } = await st.sample(turns, { tools, signal: st.aiCtl.signal, modelTier: "default", onText: ({ text: t }) => { cur.textContent = t; } });
+      cur.textContent = answer; st.ai.push({ role: "assistant", content: answer });
+    } catch (e) {
+      st.ai.pop();
+      const copy = { not_granted: "Claude wasn't allowed for this page, so the analyst is off for this visit.", cancelled: "Stopped.", rate_limited: "Too many questions at once. Wait a moment and ask again.", tools_unavailable: "This view can't run the analyst's lookups.", session_expired: "Your Claude session expired. Reload the page." }[e && e.code];
+      cur.textContent = (e && e.text ? e.text + "\n\n" : "") + (copy || `The analyst couldn't answer (${(e && e.code) || "error"}).`);
+    } finally { $("ai-send").disabled = false; $("ai-stop").hidden = true; log.scrollTop = log.scrollHeight; }
+  }
+
+  // ---------- data sources ----------
+  function renderDiag() {
+    if (!$("d-kv")) return;
+    $("d-kv").innerHTML = kv([["Connector in use", P.server], ["Connected", st.available ? st.available.join(", ") || "none" : "not checked yet"], ["Tools", st.tools ? st.tools.join(", ") || "none listed" : "not checked yet"],
+      ["Plan limits", P.limits], ["Requests this visit", String(st.calls)], ["Symbols loaded", [...st.daily.keys()].join(", ") || "none"], ["History depth", P.premiumOptions ? ($("full").checked ? "full" : "last 100 sessions") : "up to 5,000 sessions"],
+      ["AI analyst", st.sample ? "available (your Claude account)" : "not available in this view"], ["Recent errors", st.errors.join(" | ") || "none"]]);
+  }
+
+  // ---------- navigation ----------
+  function openAnalyze(sym) { sym = sym.toUpperCase(); if (!st.watch.includes(sym)) st.watch = [...st.watch, sym].slice(-10); st.symbol = sym; location.hash = "analyze"; if (st.tab === "analyze") showAnalyze(); }
+  const SHOW = { dashboard: showDashboard, analyze: () => showAnalyze(), charts: showCharts, scanner: showScanner, validate: showValidate, history: showHistory, alerts: renderRules, analyst: () => {}, sources: renderDiag };
+  function route() {
+    const name = (location.hash || "").slice(1), tab = SHOW[name] ? name : "dashboard";
+    st.tab = tab;
+    document.querySelectorAll("section[data-tab]").forEach((s) => (s.hidden = s.dataset.tab !== tab));
+    $("tabs").querySelectorAll("a").forEach((a) => (a.getAttribute("href") === "#" + tab ? a.setAttribute("aria-current", "page") : a.removeAttribute("aria-current")));
+    banner(null);
+    Promise.resolve(SHOW[tab]()).catch((e) => note(`render ${tab}: ${e.message}`));
+  }
+  $("tabs").innerHTML = TABS.map(([k, v]) => `<a href="#${k}">${esc(v)}</a>`).join("");
+  window.addEventListener("hashchange", route);
+  $("an-find").onsubmit = (e) => { e.preventDefault(); const v = $("an-ticker").value.trim().toUpperCase(); if (/^[A-Z][A-Z0-9.\-/]{0,11}$/.test(v)) { $("an-ticker").value = ""; openAnalyze(v); } else banner("Not a ticker", ` "${v}" isn't a valid symbol.`); };
+  $("an-refresh").onclick = () => showAnalyze(true);
+  $("auto").onchange = () => { clearInterval(st.timer); st.timer = $("auto").checked ? setInterval(() => { if (document.visibilityState === "visible" && S.sessionAt(new Date()).session === "regular" && (st.tab === "analyze" || st.tab === "dashboard")) (st.tab === "analyze" ? getQuote(st.symbol, true).then(() => showAnalyze()) : getQuote(st.market, true).then(() => renderQuote("mk", st.market, st.quotes.get(st.market)))).catch((e) => note(e.message)); }, 60000) : null; };
+  $("rt").onchange = () => showAnalyze(true);
+  $("full").onchange = () => { st.daily.delete(st.symbol); showAnalyze(); };
+  $("sc-run").onclick = runScan;
+  $("sc-dir").onchange = showScanner; $("sc-flag").onchange = renderScan;
+  $("va-run").onclick = runValidate; $("va-sb").onclick = runScoreboard;
+  $("al-form").onsubmit = (e) => {
+    e.preventDefault();
+    const kind = $("al-kind").value, sym = $("al-sym").value.trim().toUpperCase(), th = parseFloat($("al-th").value);
+    if (!/^[A-Z][A-Z0-9.\-/]{0,11}$/.test(sym)) return banner("Not a ticker", ` "${sym}" isn't a valid symbol.`);
+    if (kind !== "regime" && !ok(th)) return banner("Level needed", " Enter the level for this alert.");
+    st.rules.push({ kind, sym, th, armed: true, label: kind === "regime" ? `${sym}: market regime changes` : `${sym}: ${KIND[kind]} ${th}` });
+    renderRules(); checkAlerts(true);
   };
-  $("rt").onchange = () => st.mcp && loadQuote(st.loadId);
-  $("full").onchange = () => st.mcp && loadDaily(st.loadId);
-  renderChips(); renderSession(); renderDiag();
-  setInterval(() => { renderSession(); if (st.quote) renderQuote(); }, 15000); // quote age and session labels move with the clock
+  $("ai-form").onsubmit = (e) => { e.preventDefault(); const q = $("ai-q").value.trim(); if (!q || !st.sample) return; $("ai-q").value = ""; askAnalyst(q); };
+  $("ai-stop").onclick = () => st.aiCtl && st.aiCtl.abort();
+  setInterval(() => { renderSession(); }, 15000);
+  setInterval(() => checkAlerts(false), 5 * 60 * 1000);
+  renderSession(); route();
 
   (async () => {
-    const mcp = window.claude && window.claude.use ? await window.claude.use("mcp") : null;
-    st.perms = window.claude && window.claude.use ? await window.claude.use("permissions").catch(() => null) : null;
-    if (!mcp) {
-      banner("Open this page in the Claude app or on claude.ai", " It reads market data through your Twelve Data or Alpha Vantage connector, which only works inside Claude. " + CONNECT_HELP);
-      $("quote").innerHTML = '<span class="badge b-UNAVAILABLE">UNAVAILABLE</span><span class="muted">No connector access in this view.</span>';
-      return;
-    }
+    const use = (n) => (window.claude && window.claude.use ? window.claude.use(n).catch(() => null) : Promise.resolve(null));
+    const [mcp, perms, sample] = await Promise.all([use("mcp"), use("permissions"), use("sample")]);
+    st.perms = perms; st.sample = sample;
+    if (!sample) { $("ai-form").hidden = true; $("ai-log").insertAdjacentHTML("beforeend", '<div class="bubble ai">The analyst needs Claude, which this view does not offer.</div>'); }
+    if (!mcp) { banner("Open this page in the Claude app or on claude.ai", " It reads market data through your Twelve Data or Alpha Vantage connector, which only works inside Claude. " + CONNECT_HELP); return; }
     st.mcp = mcp;
     try {
-      const lt = await mcp.listTools();
-      const listed = (p) => lt.servers.find((s) => s.server === p.server && s.tools.length);
+      const lt = await mcp.listTools(), listed = (p) => lt.servers.find((s) => s.server === p.server && s.tools.length);
       st.available = PROVIDERS.filter(listed).map((p) => p.name);
       P = PROVIDERS.find(listed) || PROVIDERS[0];
-      const srv = listed(P);
-      st.tools = srv ? srv.tools.map((t) => t.name) : [];
-      $("via").textContent = `runs on your ${P.name} connector`;
+      const srv = listed(P); st.tools = srv ? srv.tools.map((t) => t.name) : [];
+      $("via").textContent = `via ${P.name}`;
       $("rt-l").hidden = $("full-l").hidden = !P.premiumOptions;
       if (!srv) { banner("No market-data connector", " " + CONNECT_HELP); renderDiag(); return; }
       if (srv.authStatus === "needs_reauth") { banner(`Reconnect ${P.name}`, " Your connector needs to sign in again: claude.ai → Settings → Connectors."); return; }
-      if (!P.premiumOptions) { $("auto").checked = true; $("auto").onchange(); } // timestamped quotes: keep them current while the market is open
+      if (!P.premiumOptions) { $("auto").checked = true; $("auto").onchange(); }
+      await learnSchemas();
     } catch (e) { explain(e); }
-    renderDiag();
-    select(st.symbol);
+    renderDiag(); route();
   })();
 })();
 </script>

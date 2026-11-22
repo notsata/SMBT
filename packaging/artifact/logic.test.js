@@ -1,4 +1,4 @@
-// Checks the phone page's logic.js against the server's Python implementation and Alpha Vantage's documented payload shapes.
+// Checks the phone page's logic.js: NYSE calendar vs exchange_calendars, connector payload shapes, quote status.
 // Run by backend/tests/test_pocket.py: node logic.test.js <logic.js> <ref.json written by the Python side>.
 const assert = require("node:assert/strict");
 require(process.argv[2]);
@@ -10,21 +10,9 @@ const ONE_OFF = new Set(["2012-10-29", "2012-10-30", "2018-12-05", "2025-01-09"]
 const bad = Object.entries(ref.trading).filter(([d, t]) => S.isTradingDay(d) !== t && !ONE_OFF.has(d));
 assert.deepEqual(bad, [], "calendar mismatches");
 
-// 2+3. indicators and state vs technical_frame / classify_row (divergences off, no relative strength)
-const close = (a, b, tol, k) => {
-  if (a === null || b === null) return assert.equal(a, b, `${k}: ${a} vs ${b}`);
-  assert.ok(Math.abs(a - b) <= tol * Math.max(1, Math.abs(b)), `${k}: ${a} vs ${b}`);
-};
-let states = 0;
-for (const c of ref.checks) {
-  const x = S.indicators(ref.bars.slice(0, c.i + 1));
-  for (const k of ["rsi14", "sma200", "dist200", "sma200_slope", "drawdown", "atr_pct", "bb_pctb", "hv20", "vol_ratio", "obv_slope20"]) close(x[k], c[k], 1e-6, `${k}@${c.i}`);
-  close(x.dist_pct, c.dist_pct, 2e-3, `dist_pct@${c.i}`);
-  assert.equal(S.classify(x)[0], c.state, `state@${c.i}`);
-  states++;
-}
+const close = (a, b, tol, k) => assert.ok(Math.abs(a - b) <= tol * Math.max(1, Math.abs(b)), `${k}: ${a} vs ${b}`);
 
-// 4. payloads (shapes from Alpha Vantage's documentation; values are made up for the test)
+// 2. payloads (shapes from Alpha Vantage's documentation; values are made up for the test)
 const qJson = { "Global Quote": { "01. symbol": "SPY", "02. open": "100.0", "03. high": "101.5", "04. low": "99.5", "05. price": "101.0", "06. volume": "1000", "07. latest trading day": "2026-11-20", "08. previous close": "100.5", "09. change": "0.5", "10. change percent": "0.4975%" } };
 const qCsv = "symbol,open,high,low,price,volume,latestDay,previousClose,change,changePercent\r\nSPY,100.0,101.5,99.5,101.0,1000,2026-11-20,100.5,0.5,0.4975%\r\n";
 for (const p of [qJson, JSON.stringify(qJson), qCsv]) {
@@ -49,7 +37,7 @@ for (const p of [dJson, dCsv, { result: dCsv }]) {
   assert.deepEqual(b.map((x) => x.t), ["2026-11-19", "2026-11-20"], "oldest first, invalid high<low row dropped");
 }
 
-// 4b. Twelve Data connector shapes (as returned by the claude.ai connector; values made up)
+// 2b. Twelve Data connector shapes (as returned by the claude.ai connector; values made up)
 const tdQ = { result: "symbol;name;exchange;mic_code;currency;datetime;timestamp;last_quote_at;open;high;low;close;volume;previous_close;change;percent_change;is_market_open\nSPY;Some ETF;NYSE;ARCX;USD;2026-11-20;1795185000;1795208340;100.0;101.5;99.5;101.0;1000;100.5;0.5;0.4975;false" };
 const tq = S.parseQuote(tdQ);
 assert.equal(tq.last, 101); assert.equal(tq.day, "2026-11-20"); assert.equal(tq.name, "Some ETF"); assert.equal(tq.quoteTs, 1795208340000); close(tq.changePct, 0.004975, 1e-9, "td pct");
@@ -58,7 +46,7 @@ assert.throws(() => S.parseDaily({ result: "Error: You have run out of API credi
 const tdD = S.parseDaily({ result: "datetime;open;high;low;close;volume\n2026-11-20;1;2;0.5;1.5;10\n2026-11-19;1;1.2;0.9;1;9\n" });
 assert.deepEqual(tdD.map((x) => x.t), ["2026-11-19", "2026-11-20"]);
 
-// 5. session clock and status (instants in UTC; New York is UTC-5 in late November)
+// 3. session clock and status (instants in UTC; New York is UTC-5 in late November)
 const at = (iso) => S.sessionAt(new Date(iso));
 assert.deepEqual(at("2026-11-22T17:00:00Z"), { session: "closed", today: "2026-11-22", tradingDay: false, lastCompleted: "2026-11-20" });
 assert.equal(at("2026-11-23T15:00:00Z").session, "regular");
@@ -78,4 +66,4 @@ assert.equal(S.quoteStatus("2026-11-23", reg, false, now - 30e3, now)[0], "LIVE"
 assert.equal(S.quoteStatus("2026-11-23", reg, false, now - 15 * 60e3, now)[0], "DELAYED", "15 min old quote");
 assert.equal(S.quoteStatus("2026-11-23", reg, false, now - 45 * 60e3, now)[0], "STALE", "45 min without a quote in session");
 assert.equal(S.quoteStatus("2026-11-20", sun, false, now - 30e3, now)[0], "CLOSED", "weekend: day-based");
-console.log(`ok: calendar ${Object.keys(ref.trading).length} weekdays, ${states} indicator/state checkpoints, parsers, session/status`);
+console.log(`ok: calendar ${Object.keys(ref.trading).length} weekdays, parsers, session/status`);
