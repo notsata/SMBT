@@ -18,7 +18,7 @@ Status labels are defined in [METHODOLOGY.md §0](METHODOLOGY.md#0-data-status-l
 | Manual CSV import for AAII, NAAIM, put/call, short interest, CAPE | User-supplied data with unknown provenance | Removed; listed as unavailable (below). |
 | Cboe put/call CSV archive (ended 2019) carried forward into scores | Stale input silently used for current scores | Removed from scores. Live SPY/QQQ options put/call (Massive Options) is shown separately and not used in scores (no history). |
 | Macro series carried forward indefinitely after the last observation | Stale values entered scores silently | Each series has `max_age_days`; beyond it the value is excluded and the card shows STALE with the series counts. |
-| Static mobile snapshot artifact (`packaging/artifact`, JSON exported from the sample DB) | Static data presented as a terminal | Retired; the build tooling is deleted. Mobile uses the live PWA. |
+| Static mobile snapshot artifact (`packaging/artifact`, JSON exported from the sample DB) | Static data presented as a terminal | Replaced by a one-page artifact that reads the viewer's own Alpha Vantage connector at view time (no bundled data); its JavaScript indicators and state rules are checked against the server's Python in `tests/test_pocket.py`. |
 | `^GSPC`/`^IXIC` Yahoo index history as default benchmarks | Index levels are licensed separately from ETF trades | Default benchmarks are SPY and QQQ (exchange-traded, covered by equity feeds). |
 | Wikipedia S&P 500 constituent CSV, optional user membership CSV | Unofficial, survivorship-biased | FMP constituents plus historical changes → point-in-time membership intervals. |
 
