@@ -15,7 +15,17 @@ export function onOfflineData(fn: Listener) {
   };
 }
 
-export async function api<T>(path: string, init?: RequestInit & { json?: unknown }): Promise<T> {
+export type ApiInit = RequestInit & { json?: unknown };
+type Transport = (path: string, init?: ApiInit) => Promise<unknown>;
+let transport: Transport | null = null;
+
+/** Replace HTTP with another data source (the offline snapshot build uses this). */
+export function setTransport(fn: Transport) {
+  transport = fn;
+}
+
+export async function api<T>(path: string, init?: ApiInit): Promise<T> {
+  if (transport) return transport(path, init) as Promise<T>;
   const { json, ...rest } = init ?? {};
   const res = await fetch(`/api${path}`, {
     credentials: "same-origin",

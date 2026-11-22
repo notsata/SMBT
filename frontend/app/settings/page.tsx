@@ -24,9 +24,21 @@ function Theme() {
 function Watchlist() {
   const wl = useApi<string[]>("/watchlist");
   const [s, setS] = useState("");
+  const [err, setErr] = useState("");
   return (
     <Panel title="Watchlist (synced across devices)">
-      <form onSubmit={async (e) => { e.preventDefault(); if (s.trim()) { await api(`/watchlist/${encodeURIComponent(s.trim().toUpperCase())}`, { method: "POST" }); setS(""); wl.reload(); } }} className="mb-2 flex gap-2">
+      <form onSubmit={async (e) => {
+        e.preventDefault();
+        if (!s.trim()) return;
+        try {
+          await api(`/watchlist/${encodeURIComponent(s.trim().toUpperCase())}`, { method: "POST" });
+          setS("");
+          setErr("");
+          wl.reload();
+        } catch (x) {
+          setErr((x as Error).message);
+        }
+      }} className="mb-2 flex gap-2">
         <input value={s} onChange={(e) => setS(e.target.value)} placeholder="Add ticker" aria-label="Add ticker" className="rounded-lg border border-line bg-panel px-2 py-1.5 text-sm" />
         <button className="rounded-lg border border-line px-3 text-sm">Add</button>
       </form>
@@ -39,6 +51,7 @@ function Watchlist() {
         ))}
         {wl.data?.length === 0 && <span className="text-sm text-muted">Empty.</span>}
       </div>
+      {err && <p className="mt-2 text-xs text-down">{err}</p>}
     </Panel>
   );
 }
@@ -55,9 +68,9 @@ function Admin({ onDone }: { onDone: () => void }) {
   return (
     <Panel title="Data operations">
       <div className="flex flex-wrap items-center gap-2 text-sm">
-        <button onClick={() => api("/admin/ingest", { method: "POST" }).then(() => setTimeout(ing.reload, 500))} className="rounded-lg bg-accent px-3 py-1.5 font-medium text-white">Run ingestion now</button>
+        <button onClick={() => api("/admin/ingest", { method: "POST" }).then(() => setTimeout(ing.reload, 500), (e: Error) => setMsg(e.message))} className="rounded-lg bg-accent px-3 py-1.5 font-medium text-white">Run ingestion now</button>
         <span className="text-xs text-muted">status: {ing.data?.state}{ing.data?.jobs !== undefined && ` · ${ing.data.jobs} jobs, ${ing.data.errors} errors`}{ing.data?.error && ` · ${ing.data.error}`}</span>
-        <button onClick={() => api<{ bars: number }>("/admin/sample", { method: "POST" }).then((r) => { setMsg(`Loaded ${r.bars} sample bars`); onDone(); })} className="rounded-lg border border-line px-3 py-1.5">Load sample data</button>
+        <button onClick={() => api<{ bars: number }>("/admin/sample", { method: "POST" }).then((r) => { setMsg(`Loaded ${r.bars} sample bars`); onDone(); }, (e: Error) => setMsg(e.message))} className="rounded-lg border border-line px-3 py-1.5">Load sample data</button>
       </div>
       <div className="mt-4 flex flex-wrap items-center gap-2 text-sm">
         <span>Import CSV (date,value[,available_at]) for</span>

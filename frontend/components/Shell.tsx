@@ -33,6 +33,8 @@ function isActive(path: string, href: string) {
 export function applyTheme(t: string) {
   const dark = t === "dark" || (t === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
   document.documentElement.classList.toggle("dark", dark);
+  if (t === "system") document.documentElement.removeAttribute("data-theme");
+  else document.documentElement.setAttribute("data-theme", t);
   try {
     localStorage.setItem("smbt-theme", t);
   } catch {
@@ -51,7 +53,7 @@ export function Shell({ children }: { children: ReactNode }) {
   const search = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if ("serviceWorker" in navigator && process.env.NODE_ENV === "production") {
+    if ("serviceWorker" in navigator && process.env.NODE_ENV === "production" && process.env.NEXT_PUBLIC_DISABLE_SW !== "1") {
       navigator.serviceWorker.register("/sw.js").catch(() => undefined);
     }
     setOnline(navigator.onLine);
