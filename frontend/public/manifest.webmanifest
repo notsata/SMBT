@@ -1,0 +1,23 @@
+{
+  "name": "SMBT Market Turning Point Research",
+  "short_name": "SMBT",
+  "description": "Market top & bottom research terminal: regime, scores, breadth, sentiment, macro, validated backtests and alerts.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "orientation": "any",
+  "background_color": "#090c11",
+  "theme_color": "#090c11",
+  "categories": ["finance", "productivity"],
+  "icons": [
+    { "src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Scanner", "url": "/scanner/" },
+    { "name": "Alerts", "url": "/alerts/" },
+    { "name": "AI Analyst", "url": "/analyst/" }
+  ]
+}

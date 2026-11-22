@@ -1,0 +1,76 @@
+symbol,name,sector,kind,cap_bucket,sector_etf
+SPY,SPDR S&P 500 ETF,Broad Market,etf,mega,
+QQQ,Invesco QQQ (Nasdaq-100),Broad Market,etf,mega,
+IWM,iShares Russell 2000 ETF,Broad Market,etf,large,
+DIA,SPDR Dow Jones Industrial Average ETF,Broad Market,etf,large,
+RSP,Invesco S&P 500 Equal Weight ETF,Broad Market,etf,large,
+XLK,Technology Select Sector SPDR,Information Technology,etf,large,
+XLF,Financial Select Sector SPDR,Financials,etf,large,
+XLE,Energy Select Sector SPDR,Energy,etf,large,
+XLV,Health Care Select Sector SPDR,Health Care,etf,large,
+XLY,Consumer Discretionary Select Sector SPDR,Consumer Discretionary,etf,large,
+XLP,Consumer Staples Select Sector SPDR,Consumer Staples,etf,large,
+XLI,Industrial Select Sector SPDR,Industrials,etf,large,
+XLB,Materials Select Sector SPDR,Materials,etf,large,
+XLU,Utilities Select Sector SPDR,Utilities,etf,large,
+XLRE,Real Estate Select Sector SPDR,Real Estate,etf,large,
+XLC,Communication Services Select Sector SPDR,Communication Services,etf,large,
+SMH,VanEck Semiconductor ETF,Information Technology,etf,large,XLK
+SOXX,iShares Semiconductor ETF,Information Technology,etf,large,XLK
+IGV,iShares Expanded Tech-Software ETF,Information Technology,etf,large,XLK
+XBI,SPDR S&P Biotech ETF,Health Care,etf,mid,XLV
+KRE,SPDR S&P Regional Banking ETF,Financials,etf,mid,XLF
+XHB,SPDR S&P Homebuilders ETF,Consumer Discretionary,etf,mid,XLY
+ITB,iShares U.S. Home Construction ETF,Consumer Discretionary,etf,mid,XLY
+EEM,iShares MSCI Emerging Markets ETF,International,etf,large,
+EFA,iShares MSCI EAFE ETF,International,etf,large,
+TLT,iShares 20+ Year Treasury Bond ETF,Fixed Income,etf,large,
+IEF,iShares 7-10 Year Treasury Bond ETF,Fixed Income,etf,large,
+HYG,iShares iBoxx High Yield Corporate Bond ETF,Fixed Income,etf,large,
+LQD,iShares iBoxx Investment Grade Corporate Bond ETF,Fixed Income,etf,large,
+GLD,SPDR Gold Shares,Commodities,etf,large,
+USO,United States Oil Fund,Commodities,etf,mid,
+AAPL,Apple Inc.,Information Technology,stock,mega,XLK
+MSFT,Microsoft Corp.,Information Technology,stock,mega,XLK
+NVDA,NVIDIA Corp.,Information Technology,stock,mega,SMH
+AVGO,Broadcom Inc.,Information Technology,stock,mega,SMH
+AMD,Advanced Micro Devices,Information Technology,stock,large,SMH
+INTC,Intel Corp.,Information Technology,stock,large,SMH
+MU,Micron Technology,Information Technology,stock,large,SMH
+TSM,Taiwan Semiconductor Manufacturing ADR,Information Technology,stock,mega,SMH
+ORCL,Oracle Corp.,Information Technology,stock,mega,XLK
+CRM,Salesforce Inc.,Information Technology,stock,large,IGV
+ADBE,Adobe Inc.,Information Technology,stock,large,IGV
+GOOG,Alphabet Inc. Class C,Communication Services,stock,mega,XLC
+META,Meta Platforms Inc.,Communication Services,stock,mega,XLC
+NFLX,Netflix Inc.,Communication Services,stock,large,XLC
+AMZN,Amazon.com Inc.,Consumer Discretionary,stock,mega,XLY
+TSLA,Tesla Inc.,Consumer Discretionary,stock,mega,XLY
+HD,Home Depot Inc.,Consumer Discretionary,stock,large,XLY
+MCD,McDonald's Corp.,Consumer Discretionary,stock,large,XLY
+NKE,Nike Inc.,Consumer Discretionary,stock,large,XLY
+COST,Costco Wholesale Corp.,Consumer Staples,stock,large,XLP
+WMT,Walmart Inc.,Consumer Staples,stock,mega,XLP
+PG,Procter & Gamble Co.,Consumer Staples,stock,large,XLP
+KO,Coca-Cola Co.,Consumer Staples,stock,large,XLP
+JPM,JPMorgan Chase & Co.,Financials,stock,mega,XLF
+BAC,Bank of America Corp.,Financials,stock,large,XLF
+GS,Goldman Sachs Group,Financials,stock,large,XLF
+V,Visa Inc.,Financials,stock,mega,XLF
+MA,Mastercard Inc.,Financials,stock,mega,XLF
+BRK-B,Berkshire Hathaway Class B,Financials,stock,mega,XLF
+UNH,UnitedHealth Group,Health Care,stock,large,XLV
+LLY,Eli Lilly and Co.,Health Care,stock,mega,XLV
+JNJ,Johnson & Johnson,Health Care,stock,large,XLV
+MRK,Merck & Co.,Health Care,stock,large,XLV
+ABBV,AbbVie Inc.,Health Care,stock,large,XLV
+XOM,Exxon Mobil Corp.,Energy,stock,mega,XLE
+CVX,Chevron Corp.,Energy,stock,large,XLE
+CAT,Caterpillar Inc.,Industrials,stock,large,XLI
+GE,GE Aerospace,Industrials,stock,large,XLI
+BA,Boeing Co.,Industrials,stock,large,XLI
+UNP,Union Pacific Corp.,Industrials,stock,large,XLI
+LIN,Linde plc,Materials,stock,large,XLB
+NEE,NextEra Energy,Utilities,stock,large,XLU
+PLTR,Palantir Technologies,Information Technology,stock,large,IGV
+COIN,Coinbase Global,Financials,stock,mid,XLF

@@ -1,0 +1,29 @@
+[project]
+name = "smbt-backend"
+version = "1.0.0"
+description = "Market turning-point research API: indicators, scores, validation, alerts, AI analyst"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.2",
+    "pandas>=2.2",
+    "numpy>=2.0",
+    "httpx>=0.27",
+    "pydantic-settings>=2.4",
+    "apscheduler>=3.10,<4",
+    "pywebpush>=2.0",
+    "anthropic>=2.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:cacheprovider"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 160
