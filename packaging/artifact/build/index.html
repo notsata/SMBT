@@ -134,7 +134,11 @@ td:last-child { text-align: right; font-family: var(--mono); }
   const kv = (el, rows) => { el.innerHTML = rows.filter(([, v]) => v !== undefined && v !== null && v !== "").map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join(""); };
 
   const st = { mcp: null, perms: null, symbols: [...DEFAULTS], symbol: "SPY", props: {}, compactOnly: true, calls: 0, errors: [], tools: null,
-    quote: null, quoteAt: null, quoteRealtime: false, bars: null, timer: null, loadId: 0 };
+    quote: null, quoteAt: null, quoteRealtime: false, bars: null, timer: null, loadId: 0,
+    mem: new Map(), // symbol -> last results, this tab only, so switching back costs no requests
+    gate: Promise.resolve(), nextAt: 0 };
+  const REUSE_MS = 10 * 60 * 1000;
+  const SPACING_MS = 1300; // free Alpha Vantage keys refuse more than 1 request per second
 
   // ---------- session clock ----------
   function renderSession() {
@@ -169,7 +173,25 @@ td:last-child { text-align: right; font-family: var(--mono); }
       } catch { /* no schema available yet (not allowed, or older viewer): keep minimal inputs */ }
     }
   }
-  async function call(tool, args) {
+  function call(tool, args) { // one request at a time, spaced for the free key's per-second limit
+    const run = st.gate.then(async () => {
+      const wait = st.nextAt - Date.now();
+      if (wait > 0) await new Promise((res) => setTimeout(res, wait));
+      try { return await callNow(tool, args); } finally { st.nextAt = Date.now() + SPACING_MS; }
+    });
+    st.gate = run.catch(() => {});
+    return run;
+  }
+  const RATE = /spreading out|requests per (day|second)|rate limit/i;
+  function friendly(m) { // provider text -> what to do; also recorded in Connection details
+    st.errors.unshift(`${new Date().toLocaleTimeString()} provider: ${m}`.slice(0, 300));
+    st.errors.length = Math.min(st.errors.length, 5);
+    renderDiag();
+    return RATE.test(m) && !/premium feature/i.test(m)
+      ? "Alpha Vantage's free-key limit was reached (1 request per second, 25 per day). Wait a minute and tap Refresh; if it keeps happening, today's 25 requests are used up."
+      : m;
+  }
+  async function callNow(tool, args) {
     st.calls++;
     try {
       const r = await st.mcp.callTool(SERVER, tool, args, { cache: false });
@@ -197,7 +219,8 @@ td:last-child { text-align: right; font-family: var(--mono); }
     if (code === "blocked_by_policy") { banner("Blocked by your organization", " Your organization's policy blocks this Alpha Vantage tool."); return null; }
     if (code === "tool_error") { // the connector's own words: rate limit, premium-only feature, unknown symbol
       const r = e.result || {}, text = (r.content || []).filter((c) => c.type === "text").map((c) => c.text).join("\n");
-      return (SMBT.providerMessage(r.structuredContent) || SMBT.providerMessage(text) || SMBT.providerMessage(e.message) || "Alpha Vantage reported an error").slice(0, 300);
+      const said = SMBT.providerMessage(r.structuredContent) || SMBT.providerMessage(text) || SMBT.providerMessage(e.message);
+      return said ? friendly(said) : "Alpha Vantage reported an error.";
     }
     if (code === "server_unavailable" || code === "upstream_error") return "Alpha Vantage didn't answer. Try Refresh in a moment.";
     return (e && e.message) || "The request failed.";
@@ -214,7 +237,7 @@ td:last-child { text-align: right; font-family: var(--mono); }
       if (!q) { renderQuoteError(`Alpha Vantage returned no quote for ${st.symbol}. Check the ticker.`); return; }
     } catch (e) {
       if (id !== st.loadId) return;
-      const m = e instanceof Error && !e.code ? e.message : explain(e);
+      const m = e instanceof Error && !e.code ? friendly(e.message) : explain(e);
       if (wantRt && m && /premium|entitlement|realtime|real-time/i.test(m)) { // key lacks real-time: say so and fall back once
         $("rt").checked = false;
         renderQuoteError("Your Alpha Vantage key doesn't include real-time data, so the delayed quote is shown.");
@@ -223,8 +246,10 @@ td:last-child { text-align: right; font-family: var(--mono); }
       if (m) renderQuoteError(m);
       return;
     }
+    remember();
     renderQuote();
   }
+  function remember() { st.mem.set(st.symbol, { quote: st.quote, quoteAt: st.quoteAt, quoteRealtime: st.quoteRealtime, bars: st.bars, compactOnly: st.compactOnly, at: Date.now() }); }
   function renderQuoteError(m) {
     if (!st.quote) $("quote").innerHTML = `<span class="badge b-UNAVAILABLE">UNAVAILABLE</span><span class="muted">${esc(m)}</span>`;
     else $("q-time").textContent = m;
@@ -254,22 +279,25 @@ td:last-child { text-align: right; font-family: var(--mono); }
       SMBT.parseDaily(payload); // throws on a provider message
     } catch (e) {
       if (id !== st.loadId) return;
-      const m = e instanceof Error && !e.code ? e.message : explain(e);
+      const m = e instanceof Error && !e.code ? friendly(e.message) : explain(e);
       if (full && m && /premium/i.test(m)) { // key lacks full history: say so and use the compact series once
         $("full").checked = false; st.compactOnly = true; full = false;
         banner("Full history needs an Alpha Vantage premium key", " Showing the last 100 sessions.");
         try { payload = await call(T_DAILY, input(T_DAILY, { symbol: st.symbol, outputsize: "compact" })); }
-        catch (e2) { return renderDailyError(e2 instanceof Error && !e2.code ? e2.message : explain(e2)); }
+        catch (e2) { return renderDailyError(e2 instanceof Error && !e2.code ? friendly(e2.message) : explain(e2)); }
       } else return m && renderDailyError(m);
     }
     if (id !== st.loadId) return;
     let bars;
-    try { bars = SMBT.parseDaily(payload); } catch (e) { return renderDailyError(e.message); }
+    try { bars = SMBT.parseDaily(payload); } catch (e) { return renderDailyError(friendly(e.message)); }
     if (!bars.length) return renderDailyError(`No daily history for ${st.symbol}.`);
     st.bars = bars;
+    remember();
     renderDaily();
   }
   function renderDailyError(m) {
+    if (st.bars) { $("i-meta").insertAdjacentHTML("beforeend", ` <span class="badge b-STALE" title="${esc(m)}">refresh failed</span>`); banner("Couldn't refresh the history", " " + m); return; }
+    $("i-meta").textContent = "";
     $("state").innerHTML = `<span class="badge b-UNAVAILABLE">UNAVAILABLE</span> <span class="muted">${esc(m)}</span>`;
     $("ind").innerHTML = `<tr><td class="muted">${esc(m)}</td><td></td></tr>`;
     $("c-meta").textContent = "";
@@ -353,17 +381,24 @@ td:last-child { text-align: right; font-family: var(--mono); }
     st.symbol = sym; st.quote = null; st.bars = null; const id = ++st.loadId;
     banner(null); renderChips();
     $("q-sym").textContent = sym; $("q-time").textContent = ""; $("quote").innerHTML = '<span class="skeleton">Loading…</span>';
+    $("i-meta").textContent = ""; $("c-meta").textContent = "";
     $("state").innerHTML = '<span class="skeleton">Loading…</span>'; $("ind").innerHTML = '<tr><td class="skeleton">Loading…</td><td></td></tr>';
     if (!st.mcp) return;
+    const m = st.mem.get(sym);
+    if (m && Date.now() - m.at < REUSE_MS && m.bars && m.quote) { // seen in the last 10 minutes: no new requests
+      Object.assign(st, { quote: m.quote, quoteAt: m.quoteAt, quoteRealtime: m.quoteRealtime, bars: m.bars, compactOnly: m.compactOnly });
+      renderQuote(); renderDaily(); renderDiag();
+      return;
+    }
     await loadQuote(id); // sequential: the first call asks for consent once
     await learnSchemas();
-    await loadDaily(id);
+    if (id === st.loadId) await loadDaily(id);
     renderDiag();
   }
 
   // ---------- boot ----------
   $("find").onsubmit = (e) => { e.preventDefault(); const v = $("ticker").value; if (v.trim()) { select(v); $("ticker").value = ""; } };
-  $("refresh").onclick = () => st.mcp && loadQuote(st.loadId);
+  $("refresh").onclick = () => { if (!st.mcp) return; banner(null); loadQuote(st.loadId).then(() => !st.bars && loadDaily(st.loadId)); };
   $("auto").onchange = () => {
     clearInterval(st.timer); st.timer = null;
     if ($("auto").checked) st.timer = setInterval(() => { if (document.visibilityState === "visible" && SMBT.sessionAt(new Date()).session !== "closed") loadQuote(st.loadId); }, 60000);
