@@ -36,6 +36,12 @@ It separates three kinds of evidence everywhere in the UI and API, and never mix
 
 `python -m app.cli report <SYMBOL>` prints the signal scoreboard and walk-forward results from stored data. On the bundled sample (S&P 500 and NASDAQ Composite, 1999–2018) **no timing strategy beat buy-and-hold CAGR out of sample**, and the one signal with a significant S&P 500 event-study edge (Bottom score ≥ 70, p = 0.015, q = 0.09, 20 events) **did not replicate on the NASDAQ** (p = 0.42). Full numbers and caveats: [docs/METHODOLOGY.md](docs/METHODOLOGY.md#measured-results-on-the-bundled-sample). Re-run on live data after ingestion — results will change, and the app shows whatever the data says.
 
+## Get it running
+
+- **Windows PC**: run `SMBT-Setup.exe` (build it with `packaging/windows/build.sh`, or download the `SMBT-Setup` artifact from the *windows-app* GitHub Actions run). Per-user install, no admin; opens at `http://127.0.0.1:8765`, loads the bundled history instantly and refreshes live data in the background. Settings/API keys: Start menu → *SMBT settings*. Unsigned, so SmartScreen asks once (More info → Run anyway).
+- **Phone, no server**: a read-only snapshot of the same UI and numbers (bundled 1999–2018 data) is built by `packaging/artifact/build.sh` and published as a Claude artifact; its AI analyst runs on the viewer's Claude account.
+- **Phone with live data, alerts and push**: deploy the server ([docs/DEPLOY.md](docs/DEPLOY.md)) and add it to the home screen.
+
 ## Quick start (local, no API keys)
 
 ```bash
