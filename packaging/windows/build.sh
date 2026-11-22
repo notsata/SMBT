@@ -30,7 +30,6 @@ find "$STAGE/python/Lib/site-packages" -type d \( -name tests -o -name __pycache
 
 echo "== app"
 cp -r "$ROOT/backend/app" "$STAGE/backend/app"
-cp -r "$ROOT/sample-data" "$STAGE/sample-data"
 find "$STAGE/backend" -name __pycache__ -prune -exec rm -rf {} +
 (cd "$ROOT/frontend" && npm ci --no-audit --no-fund --silent && NEXT_TELEMETRY_DISABLED=1 npm run build --silent)
 cp -r "$ROOT/frontend/out" "$STAGE/frontend/out"

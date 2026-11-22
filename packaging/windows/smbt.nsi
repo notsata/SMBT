@@ -1,5 +1,5 @@
 ; SMBT per-user installer (no admin rights). Installs to %LOCALAPPDATA%\Programs\SMBT.
-; User data (database, settings, log) lives in %LOCALAPPDATA%\SMBT and survives reinstall/uninstall.
+; Operator settings (provider keys) and the log live in %LOCALAPPDATA%\SMBT and survive reinstall/uninstall. No market data is stored.
 Unicode true
 SetCompressor /SOLID lzma
 Name "SMBT Market Research"

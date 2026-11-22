@@ -1,27 +1,7 @@
 name: ci
 on: [push, pull_request]
+permissions: { contents: read }
 jobs:
-  backend:
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:16
-        env: { POSTGRES_PASSWORD: test, POSTGRES_DB: smbt_test }
-        ports: ["5432:5432"]
-        options: --health-cmd pg_isready --health-interval 5s --health-retries 10
-    strategy:
-      matrix:
-        db: [sqlite, postgres]
-    defaults: { run: { working-directory: backend } }
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.13" }
-      - run: pip install -r requirements.txt pytest
-      - name: tests
-        run: |
-          if [ "${{ matrix.db }}" = postgres ]; then export DATABASE_URL=postgresql+psycopg://postgres:test@localhost:5432/smbt_test; fi
-          python -m pytest -q
   frontend:
     runs-on: ubuntu-latest
     defaults: { run: { working-directory: frontend } }
@@ -33,3 +13,42 @@ jobs:
       - run: npx tsc --noEmit
       - run: npm test
       - run: npm run build
+      - uses: actions/upload-artifact@v4
+        with: { name: frontend-out, path: frontend/out, retention-days: 3 }
+
+  backend:
+    needs: frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: frontend-out, path: frontend/out }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.13" }
+      - uses: actions/setup-node@v4
+        with: { node-version: "22" }
+      - name: Playwright for the real-browser test
+        working-directory: frontend
+        run: npm i --no-save --no-audit --no-fund playwright@1.63.0 && npx playwright install --with-deps chromium
+      - run: pip install -r backend/requirements.txt pytest
+      - name: tests (unit, fake-upstream pipeline, real browser on desktop + iPhone viewports)
+        working-directory: backend
+        run: python -m pytest -q -rs
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t smbt .
+      - name: Run read-only with no keys and probe
+        run: |
+          docker run -d --name smbt --read-only --tmpfs /tmp -p 8000:8000 smbt
+          for i in $(seq 1 60); do curl -fs localhost:8000/api/health && break; sleep 2; done
+          curl -fs localhost:8000/ | grep -q "<html"
+          # keyless live source: official Cboe history fetched over the internet now (nothing is bundled in the image)
+          curl -fs "localhost:8000/api/chart/%5EVIX" | python3 -c "import json,sys; d=json.load(sys.stdin); print(d['provider'], len(d['bars']), d['last_confirmed']); assert d['provider']=='cboe' and len(d['bars'])>5000"
+          # no equity provider configured: the dashboard must refuse, not invent
+          test "$(curl -s -o /dev/null -w '%{http_code}' localhost:8000/api/overview)" = 503
+          docker exec smbt sh -c 'test ! -e /app/sample-data'
+      - if: always()
+        run: docker logs smbt 2>&1 | tail -40

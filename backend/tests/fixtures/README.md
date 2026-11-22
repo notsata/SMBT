@@ -1,6 +1,6 @@
-# Sample data
+# Test fixtures
 
-Real historical data for development and tests without network access. Extracted from the datasets bundled in the
+Real historical data used only by the test suite (never by the running app, which has no bundled data). Extracted from the datasets bundled in the
 [`arch`](https://pypi.org/project/arch/) Python package (v9.0.0, NCSA licence), which were originally exported from
 Yahoo Finance and FRED.
 
@@ -11,8 +11,5 @@ Yahoo Finance and FRED.
 | `bars_vix.csv.gz` | Cboe VIX daily close (holidays removed) | 2014-01-03 – 2019-01-03 |
 | `macro.csv.gz` | Moody's AAA & BAA yields (monthly), core CPI (CPILFESL, monthly) | 1919/1957 – 2018 |
 
-Loaded with `python -m app.cli sample`; rows are labelled `sample: arch package bundle …` everywhere they appear.
-
-Not included (needs live ingestion): SPY/QQQ/ETFs/stocks, S&P 500 constituents (so breadth is unavailable in sample mode),
-VIX3M, put/call, FRED daily series, 2019+ history (COVID, 2022). Macro sample values have no vintage history, so a
-conservative publication lag is applied.
+`tests/conftest.py` injects these through the provider seam (`history._fetch`, `fred.observations`) so every analysis path runs
+on genuine observations without network access. The data ends in 2018, so every status in tests reads STALE, as it should.

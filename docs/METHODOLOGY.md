@@ -1,13 +1,30 @@
 # Methodology
 
+## 0. Data status labels
+
+Every value carries its own status; the dashboard is never labelled LIVE as a whole.
+
+| Label | Meaning | Example |
+|---|---|---|
+| LIVE | Real-time feed confirmed connected and events arriving within `STALE_REGULAR_S` (regular hours) or `STALE_EXTENDED_S` (extended hours) | SIP/IEX trade stream during the session |
+| DELAYED | Known, stated delay: a 15-minute feed, the prior close, an official release schedule, or a polled snapshot | `delayed_sip`, FRED macro, intraday breadth polled every 120 s |
+| STALE | Was verified, is no longer current: feed silent while the market trades, history provider behind the last completed session, a macro series past its `max_age_days` | |
+| CLOSED | No session in progress (weekend, holiday, overnight); values are the last verified ones | |
+| UNAVAILABLE | No trustworthy value: no provider configured, not licensed for this access mode, provider error, or required inputs missing | |
+
+Every card and quote has a "source & method" inspector: provider, feed, authority, event time, receipt time, session, known delay, method and the status reason.
+
+**Two bases.** *Confirmed* values use completed sessions only and are the only inputs to probabilities, signal statistics, analogs and backtests. *Provisional* values append today's in-progress bar (built from the live stream, LIVE or DELAYED feeds only, never carried forward from an earlier day) and are display-only: intraday scores, regime and indicators, each showing the confirmed value and date next to it. A provisional bar never enters any validated statistic.
+
 ## 1. No look-ahead, by construction and by test
 
 | Risk | Control | Where |
 |---|---|---|
 | Indicators using future bars | Only rolling/expanding/EWM windows. Percentiles are *expanding* ranks (value vs its own history up to today, min 252 obs). | `quant/technical.py` |
 | Pivot-based signals (divergences) | Pivot needs k bars on each side; the signal is stamped on the **confirmation bar** (pivot + k), never the pivot bar. | `technical.divergences` |
-| Macro revisions / publication delay | Every observation stores `available_at`. With `FRED_API_KEY`, revised series use ALFRED **first-release** vintages (`output_type=4`); otherwise a conservative per-series lag (e.g. CPI +46 days from period start). Derived values (YoY, Sahm gap) only become usable when their newest input was published; availability is forced monotone. | `data/catalog.py`, `data/store.pit_series` |
-| Partial intraday bars | The in-progress session is never stored; only settled daily bars. | `providers.parse_yahoo_chart` |
+| Macro revisions / publication delay | Every observation carries `available_at`. With `FRED_API_KEY`, revised series use ALFRED **first-release** vintages; otherwise a conservative per-series lag (e.g. CPI +46 days from period start). Derived values (YoY, Sahm gap) only become usable when their newest input was published; availability is forced monotone. | `market/macro.py` (`MacroStore.pit`) |
+| Stale macro carried forward | A value is used on date *t* only while *t* − observation date ≤ the series' `max_age_days` (about twice its release interval). A discontinued or failing series drops out instead of leaking an old value into today's scores. | `market/macro.py` |
+| Partial intraday bars | History requests return completed sessions only; today's bar exists only on the provisional basis (§0). | `market/history.py`, `services.provisional_bar` |
 | Same-bar execution | A target decided at close *t* is filled at the **open of t+1** (or close of t+1 if no opens) and earns returns from there. | `backtest/engine.py` |
 | Parameter snooping | Walk-forward: parameters chosen on the train window only; OOS segments concatenated. Purged k-fold excludes 126 sessions before and 20 after each test block. | `backtest/validation.py` |
 | Unresolved labels in probability estimates | At date *t*, only outcomes whose window closed by *t* (index ≤ t−h) are counted. | `quant/probability.walk_forward_probability` |
@@ -24,8 +41,8 @@ Each component maps to 0–1 (point-in-time percentile, scaled level, or a recen
 |---|---|---|
 | Technical | RSI(14) low, drawdown depth, distance below 200d, Bollinger %B low, bullish RSI/MACD divergence (10d), capitulation volume (5d) | extension above 200d, RSI high, stretch above 50d in ATRs, bearish divergence near highs, price up on falling OBV |
 | Breadth | few members above 50d, share oversold, McClellan low, net new lows, Zweig thrust (20d), 90% down day (10d) | breadth divergence at highs, share overbought, weak net new highs near index high |
-| Sentiment | VIX high, VIX/VIX3M backwardation, put/call high, AAII bearish, F&G fear, realised vol high | VIX low, steep contango, put/call low, AAII bullish, F&G greed |
-| Macro | credit stress high but easing | curve un-inverting, credit widening, Fed tightening, Sahm gap, valuation (CAPE or market cap/GDP) |
+| Sentiment | VIX high, VIX/VIX3M backwardation, F&G fear, realised vol high | VIX low, steep contango, F&G greed |
+| Macro | credit stress high but easing | curve un-inverting, credit widening, Fed tightening, Sahm gap, valuation (market cap / GDP) |
 
 Weights (technical/breadth/sentiment/macro), e.g. Bottom in *strong bull* 0.50/0.20/0.25/0.05 (dips are shallow technical events) vs *bear capitulation* 0.20/0.35/0.35/0.10 (washouts are breadth/sentiment events). Full tables: `quant/scores.py`.
 
@@ -43,7 +60,7 @@ For the headline panel the current score's 10-point bucket is compared with all 
 
 ## 4. Historical analogs
 
-Fingerprint = point-in-time percentiles of momentum (dist200, 63d ROC), drawdown, breadth, sentiment (VIX, term structure, put/call, F&G), volatility, valuation, credit (level, 63d change), liquidity (net liquidity 63d change), rates (curve, real yield). Similarity = 1 − RMS distance over shared features (≥ 60% overlap). Matches exclude the last 126 sessions and are de-clustered ≥ 40 sessions apart. Output: forward 5–252 session returns per match, outcome percentiles across matches vs all days, and similarity to 13 named turning points (2000, 2002, 2007, 2009, 2011, 2016, 2018, 2020, 2022, 2025).
+Fingerprint = point-in-time percentiles of momentum (dist200, 63d ROC), drawdown, breadth, sentiment (VIX, term structure, F&G), volatility, valuation, credit (level, 63d change), liquidity (net liquidity 63d change), rates (curve, real yield). Similarity = 1 − RMS distance over shared features (≥ 60% overlap). Matches exclude the last 126 sessions and are de-clustered ≥ 40 sessions apart. Output: forward 5–252 session returns per match, outcome percentiles across matches vs all days, and similarity to 13 named turning points (2000, 2002, 2007, 2009, 2011, 2016, 2018, 2020, 2022, 2025).
 
 ## 5. Backtests and signal statistics
 
@@ -53,11 +70,11 @@ Fingerprint = point-in-time percentiles of momentum (dist200, 63d ROC), drawdown
 - **Event studies**: rising-edge events de-clustered by a cooldown; entry next open, exit close at h. p-value = share of 2000 random same-size entry sets (same period) that did at least as well (one-sided: bullish signals should beat random, bearish should lag). **Benjamini–Hochberg q-values** across all signals on the scoreboard; "robust" requires q < 0.10.
 - **Turning points**: zigzag pivots (default 10% swings) graded after the fact. Precision = share of signals within ±20 sessions of a pivot of the right kind; recall = share of pivots with a signal nearby; median lead/lag; missed pivots listed.
 - **Stability**: event-study excess per contiguous era (5 blocks) — an edge from a single era is visible as such.
-- **Survivorship**: index/ETF return series are not affected by constituent survivorship. Breadth is computed over current members unless `SP500_HISTORY_URL` provides membership history; the API flags which. Scanner evidence pools today's universe and says so.
+- **Survivorship**: index/ETF return series are not affected by constituent survivorship. Breadth uses point-in-time S&P 500 membership from FMP's change history when available, otherwise current members (flagged as survivorship-biased in the API and on the Data sources page). Scanner evidence pools today's universe and says so.
 
-## Measured results on the bundled sample
+## Historical results (v1, 1999–2018 index history)
 
-Data: S&P 500 (^GSPC) and NASDAQ Composite (^IXIC) daily 1999-01-04 → 2018-12-31; VIX only from 2014; no breadth, no FRED daily series (so these scores run at ~45–55% coverage). Generated by `python -m app.cli report ^GSPC` / `^IXIC`. Walk-forward: 6y train / 2y test, OOS 2006-04 → 2018-12, 1 + 2 bps.
+These figures were measured with v1 on S&P 500 (^GSPC) and NASDAQ Composite (^IXIC) daily history 1999-01-04 → 2018-12-31, which now exists only as test fixtures. They include v1 inputs since removed (archived put/call) and no breadth or credit spreads (~45–55% score coverage). They describe that period only; run `python -m app.cli report SPY` with live history for current figures. Walk-forward: 6y train / 2y test, OOS 2006-04 → 2018-12, 1 + 2 bps.
 
 **Signal scoreboard (60-session forward, next-open entry)** — top rows:
 
@@ -79,12 +96,13 @@ Data: S&P 500 (^GSPC) and NASDAQ Composite (^IXIC) daily 1999-01-04 → 2018-12-
 | Bottom-score entries | 1.7% | 0.21 | −24% | [−0.65, +0.25] | 0.6% | [−0.85, +0.05] |
 | RSI(2) mean reversion | 2.4% | 0.40 | −15% | [−0.55, +0.60] | 2.0% | [−0.72, +0.55] |
 
-Reading: no strategy's Sharpe improvement is statistically distinguishable from zero; the trend filter roughly halved drawdowns at similar return on the S&P but not on the NASDAQ; the top-risk score did not anticipate 10% corrections better than the base rate (negative OOS Brier skill). The bottom-score entry edge on the S&P did not replicate on the NASDAQ. These results include no breadth or credit-spread inputs — re-run after live ingestion before drawing conclusions.
+Reading: no strategy's Sharpe improvement is statistically distinguishable from zero; the trend filter roughly halved drawdowns at similar return on the S&P but not on the NASDAQ; the top-risk score did not anticipate 10% corrections better than the base rate (negative OOS Brier skill). The bottom-score entry edge on the S&P did not replicate on the NASDAQ. These results include no breadth or credit-spread inputs; re-run with live history before drawing conclusions.
 
 ## Known limitations
 
-- Breadth uses S&P 500 members, not the NYSE tape; history is survivorship-biased without a membership file, and delisted constituents' prices are not available from free sources even with one (coverage is reported).
-- Free price data (Yahoo, unofficial) can have gaps and adjustment errors; quality checks flag but do not repair them. Prefer Tiingo or a paid vendor for production.
-- Put/call daily history from Cboe ends in 2019; AAII, NAAIM, CAPE, short interest require import.
-- Gamma exposure, unusual options activity, earnings revisions and company fundamentals need licensed data and are shown as unavailable.
+- Breadth uses S&P 500 members, not the NYSE tape; delisted constituents count only while their prices exist at the history provider (coverage is reported).
+- The free Alpaca IEX feed covers one venue: last price is real but volume, VWAP and day high/low reflect IEX prints only (labelled in the inspector). Use SIP for consolidated values.
+- Options analytics (Massive Options) are a current snapshot with no history, so they are shown but not used in scores.
+- AAII, NAAIM, CAPE, short interest, market-wide put/call, unusual options activity and estimate-revision history have no licensed source here and are listed as unavailable.
+- Process memory is the only cache: after a restart the first requests refetch history from providers (slower first load, more provider calls).
 - Score weights are a priori, not fitted (fitting them would need its own walk-forward). Their usefulness is exactly what the validation pages measure.

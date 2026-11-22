@@ -1,26 +1,27 @@
 # Deployment
 
-One container image serves the API **and** the static PWA from the same origin (simplest auth, no CORS, service worker scope `/`). A second container from the same image runs the scheduler. PostgreSQL with TimescaleDB stores history (plain PostgreSQL also works; SQLite for local dev).
+One container, one process: FastAPI serves the API, the `/ws` WebSocket and the static PWA from the same origin, and runs the background loops (stream hub, macro refresh, breadth, provisional scores, session alerts). There is no database, volume, worker or user store. Restarting the container loses only in-memory caches, which refill from the providers.
 
-## 1. Docker Compose on a small VPS (recommended)
+Read [DATA_SOURCES.md §2](DATA_SOURCES.md#2-licensing-and-access-models) before exposing the server to anyone but yourself: `ACCESS_MODE=public` serves only providers you are licensed to display publicly.
 
-Requirements: Docker, a domain name, ports 80/443 open. 1 vCPU / 2 GB RAM is enough.
+## 1. Docker Compose on a small VPS
+
+Requirements: Docker, a domain, ports 80/443 open. 1 vCPU / 1–2 GB RAM is enough (more with breadth enabled: ~500 constituent histories in memory).
 
 ```bash
 git clone <your repo> smbt && cd smbt
-cp .env.example .env
-python3 -c "import secrets;print(secrets.token_urlsafe(32))"   # -> APP_ACCESS_TOKEN
-# set APP_ACCESS_TOKEN, POSTGRES_PASSWORD, optional FRED/Tiingo/Anthropic keys
-docker compose run --rm api python -m app.cli vapid             # paste VAPID_* into .env for push
+cp .env.example .env          # add provider keys; set ACCESS_MODE / PUBLIC_DISPLAY_LICENSES
 docker compose up -d --build
-docker compose logs -f worker                                   # first run ingests history (~10 min for 600 symbols)
+docker compose exec api python -m app.cli check   # live check of every configured provider and stream
 ```
 
-The worker runs ingestion → score recomputation → alert evaluation at **18:15 America/New_York, Mon–Fri** (after vendors publish EOD data), plus a Saturday catch-up. Trigger manually from Settings → "Run ingestion now" or `docker compose exec api python -m app.cli ingest`.
+The compose file runs the container read-only with a tmpfs `/tmp`; nothing is written to disk.
 
-### HTTPS (required)
+**Run exactly one instance.** The process holds the upstream stream connections and live state. Several replicas would each open their own provider streams (Alpaca allows one stream connection per account on most plans) and would not share subscriptions. Scale vertically.
 
-Service workers, installation and Web Push need HTTPS, and iOS will not install a non-HTTPS PWA. Put Caddy in front (automatic Let's Encrypt):
+### HTTPS and WebSockets
+
+The PWA needs HTTPS to install on iPhone and to use notifications. Caddy (automatic certificates, proxies WebSockets without extra config):
 
 ```
 # /etc/caddy/Caddyfile
@@ -30,51 +31,45 @@ markets.example.com {
 }
 ```
 
-Keep `COOKIE_SECURE=true`. Bind the API to localhost only (`API_PORT=127.0.0.1:8000` in `.env`) when Caddy runs on the same host.
-
-### Backups
-
-```bash
-docker compose exec db pg_dump -U smbt smbt | gzip > smbt-$(date +%F).sql.gz
-```
-
-Everything can be re-ingested except alerts, watchlist, settings and imported series — back those up.
+Set `API_PORT=127.0.0.1:8000` in `.env` so the container is reachable only through Caddy. This matters: the server trusts `X-Forwarded-For` for per-IP rate limits, which a client could spoof if the port were public. With nginx, forward `Upgrade`/`Connection` headers for `/ws` and raise `proxy_read_timeout` above 60 s (the server sends status every 5 s).
 
 ## 2. Managed platforms
 
-Any host that runs a Docker image + managed Postgres works (Fly.io, Render, Railway, a cloud VM):
-
-- Web service: this `Dockerfile`, port 8000, health check `/api/health`.
-- Worker: same image, command `python -m app.cli worker`, exactly **one** instance (it holds the schedule).
-- Database: managed PostgreSQL 15+; set `DATABASE_URL=postgresql+psycopg://user:pass@host:5432/db`. TimescaleDB is used when the extension is available, otherwise plain tables.
-- Secrets: set env vars in the platform's secret store, never in the image.
+Any host that runs a Docker image works (Fly.io, Render, Railway, a cloud VM): this `Dockerfile`, port 8000, health check `/api/health`, one instance, WebSockets enabled, keys in the platform's secret store (never in the image). No database add-on is needed.
 
 ## 3. Local development
 
 ```bash
 cd backend && python -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt pytest
-python -m app.cli sample            # bundled real 1999-2018 data, works offline
-uvicorn app.main:app --reload       # SQLite at backend/smbt.db by default
-cd ../frontend && npm install && npm run dev    # :3000, proxies /api -> :8000 (API_URL to change)
+cp ../.env.example ../.env       # add at least one equity provider key for live data
+python -m app.cli check          # verify keys and streams
+uvicorn app.main:app --reload    # :8000
+cd ../frontend && npm install && npm run dev    # :3000, proxies /api to :8000 (set API_URL to change)
 ```
 
-Production frontend build: `npm run build` writes `frontend/out/`, which FastAPI serves automatically when present.
+`npm run dev` proxies `/api` only; for live quotes in dev, open the built app from FastAPI (`npm run build`, then `http://127.0.0.1:8000`), which serves `frontend/out/` and `/ws` on one origin.
 
-## 4. Installing on devices
+Tests: `python -m pytest -q` (backend; includes the real-browser test when `frontend/out` exists and Node can load Playwright), `npm run typecheck && npm test` (frontend).
 
-- **iPhone (iOS 16.4+)**: open the HTTPS URL in Safari → Share → *Add to Home Screen* → open SMBT from the home screen → sign in → Alerts → *Enable notifications*. Push only works from the installed app, not a Safari tab. iOS may delay or batch notifications (Focus, Low Power).
-- **Windows**: Chrome or Edge → install icon in the address bar (or menu → *Install SMBT*). Enable notifications on the Alerts page.
-- Each device signs in once with `APP_ACCESS_TOKEN` (HttpOnly cookie, 90 days). Watchlist, alerts and settings live on the server, so all devices stay in sync. Rotating the token signs out every device.
+## 4. Windows desktop app
 
-## 5. Security checklist
+`SMBT-Setup.exe` (built by the `windows-app` workflow) installs per user and runs in `personal` mode on `127.0.0.1:8765`. On first start it creates `%LOCALAPPDATA%\SMBT\settings.env` listing every provider key; add yours, save, restart SMBT. Only that settings file and a log are written; no market data is stored.
 
-- `APP_ACCESS_TOKEN` set (the API logs a warning when it is empty; without it anyone who finds the URL can read and change your alerts).
-- HTTPS only; `COOKIE_SECURE=true`.
-- Login is rate-limited (10 failures / 15 min / IP); use a long random token.
-- API keys only in `.env` / platform secrets; they are never logged or returned by the API.
-- The AI analyst only receives data computed by this app (no browsing, no code execution) and requests go to the Anthropic API with the server-side refusal fallback enabled.
-- Single-user design: everyone with the token shares one workspace. Multi-user accounts would need real user management.
+## 5. Installing on devices
 
-## 6. Configuration reference
+- **iPhone (iOS 16.4+)**: open the HTTPS URL in Safari → Share → *Add to Home Screen*. Allow notifications on the Alerts page from the installed app. Alerts fire only while the app is open (no push service or stored subscription).
+- **Windows**: Chrome or Edge → install icon in the address bar.
+- The phone reconnects the WebSocket and resubscribes as soon as the app returns to the foreground or the network comes back.
 
-See `.env.example`. Notable: `BENCHMARKS` (default `SPY,QQQ`), `UNIVERSE_FILE` (scanner list, default `backend/app/universe.csv` with sector/cap metadata), `SP500_HISTORY_URL`, `COMMISSION_BPS`, `SLIPPAGE_BPS`, `MAX_ALERTS_PER_DAY`, `STALE_AFTER_DAYS`, `ANALYST_MODEL`.
+## 6. Security checklist
+
+- Keys only in `.env` or platform secrets; the browser never receives them, and they never appear in logs or error messages.
+- HTTPS only; container port bound to localhost behind the proxy.
+- Public deployments: `ACCESS_MODE=public` and only the licences you actually hold in `PUBLIC_DISPLAY_LICENSES`.
+- Per-IP in-memory rate limits on the API, backtests and the AI analyst (`RATE_LIMIT_PER_MIN`, `HEAVY_RATE_LIMIT_PER_MIN`, `ANALYST_PER_HOUR`); each browser connection may stream at most `MAX_SYMBOLS_PER_CLIENT` symbols.
+- The AI analyst only receives data computed by this app (no browsing, no code execution).
+- No accounts, cookies, analytics or tracking. `/api/*` responses are `Cache-Control: no-store`.
+
+## 7. Configuration reference
+
+All variables with defaults: [DATA_SOURCES.md §3](DATA_SOURCES.md#3-environment-variables). Template: `.env.example`.

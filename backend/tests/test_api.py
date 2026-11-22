@@ -37,6 +37,7 @@ def test_overview_cards_carry_provenance_and_status(client):
         assert c["status"] in {"LIVE", "DELAYED", "STALE", "CLOSED", "UNAVAILABLE"}
     # fixture history ends 2018, so nothing may claim to be current
     assert ov["cards"]["bottom"]["status"] == "STALE" and "has not published" in ov["cards"]["bottom"]["note"]
+    assert ov["price"]["status"] == "STALE"  # the header's fallback close must not read as merely CLOSED
     assert ov["cards"]["breadth"]["status"] == "UNAVAILABLE" and ov["cards"]["breadth"]["value"] is None
     assert ov["quote"]["status"] == "UNAVAILABLE"  # no streaming provider configured: no price is shown as live
     assert ov["probabilities"]["kind"] == "empirical" and ov["confirmed_as_of"] == "2018-12-31"

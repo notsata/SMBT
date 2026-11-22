@@ -9,7 +9,7 @@ const base = process.argv[2];
 assert.ok(base, "usage: node tests/browser.e2e.mjs <base-url>");
 
 const shots = process.env.SCREENSHOT_DIR; // optional: save a screenshot of each checked page
-const shot = (page, name) => shots && page.screenshot({ path: `${shots}/${name}.png`, fullPage: true });
+const shot = (page, name) => shots && page.screenshot({ path: `${shots}/${name}.png`, fullPage: !name.startsWith("iphone") });
 const STATUSES = ["LIVE", "DELAYED", "STALE", "CLOSED", "UNAVAILABLE"];
 const browser = await chromium.launch();
 const errors = [];
@@ -35,6 +35,7 @@ try {
     await page.getByText("Bottom Opportunity Score").first().waitFor({ timeout: 60_000 });
     const badges = await page.locator("span[title]").filter({ hasText: new RegExp(`^(${STATUSES.join("|")})$`) }).count();
     assert.ok(badges >= 8, `${label}: expected a status badge per card, found ${badges}`);
+    await page.locator("canvas").first().waitFor({ timeout: 60_000 }); // price chart rendered
     await page.getByRole("button", { name: "source & method" }).nth(1).click();
     await page.getByText("Method", { exact: true }).first().waitFor();
     await shot(page, `${label}-dashboard`);

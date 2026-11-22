@@ -279,7 +279,7 @@ def overview(symbol: str | None = None) -> dict:
         "confirmed_as_of": as_of,
         "provisional_as_of": prov and prov["as_of"],
         "price": {"close": _num(last["close"], 2), "change_1d": _num(last["ret1"], 4), "provider": pp, "authority": meta["price"].get("authority"),
-                  "adjustment": meta["price"].get("adjustment")},
+                  "adjustment": meta["price"].get("adjustment"), "status": str(dstatus), "note": dnote},
         "cards": cards,
         "explain": {"bottom": scores.explain(sf, f, side="bottom"), "top": scores.explain(sf, f, side="top"),
                     "trend": {k[3:]: _num(srow[k], 3) for k in sf.columns if k.startswith("tc:")}},
@@ -550,6 +550,7 @@ def analyze(symbol: str) -> dict:
     return clean({
         "symbol": symbol, "name": (prof or {}).get("name") or symbol, "profile": prof,
         "as_of": f.index[-1].date().isoformat(), "provider": b.attrs["provider"], "authority": b.attrs["authority"], "adjustment": b.attrs["adjustment"],
+        "status": (ds := _daily_status({"price": b.attrs}))[0], "status_note": ds[1],
         "quote": hub.view(symbol) if symbol in hub.states else None,
         "state": state, "state_label": STATE_LABELS[state], "reasons": reasons, "live": live,
         "state_forward_stats": stats,

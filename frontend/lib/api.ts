@@ -117,7 +117,7 @@ export type Overview = {
   quote: Quote | null;
   confirmed_as_of: string;
   provisional_as_of: string | null;
-  price: { close: number | null; change_1d: number | null; provider: string; authority: string; adjustment: string };
+  price: { close: number | null; change_1d: number | null; provider: string; authority: string; adjustment: string; status: DataStatus; note?: string | null };
   cards: Record<"regime" | "bottom" | "top" | "trend" | "vix" | "breadth" | "sentiment" | "macro", Card>;
   explain: { bottom: Explain; top: Explain; trend: Record<string, number | null> };
   probabilities: { kind: string; method: string; as_of: string; bottom: ProbRow[]; top: ProbRow[] };
@@ -164,6 +164,8 @@ export type Analysis = {
   provider: string;
   authority: string;
   adjustment: string;
+  status: DataStatus;
+  status_note: string;
   quote: Quote | null;
   state: string;
   state_label: string;

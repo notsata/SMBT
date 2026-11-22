@@ -181,7 +181,7 @@ function Analyze() {
             {inWl ? "★ Watching" : "☆ Watch (this tab)"}
           </button>
         )}
-        {s && <span className="ml-auto"><LiveQuote symbol={s} initial={a.data?.quote} close={a.data && { value: a.data.indicators.close, change: null, as_of: a.data.as_of, status: "DELAYED", provider: a.data.provider, note: "daily close from the history provider" }} /></span>}
+        {s && <span className="ml-auto"><LiveQuote symbol={s} initial={a.data?.quote} close={a.data && { value: a.data.indicators.close, change: null, as_of: a.data.as_of, status: a.data.status, provider: a.data.provider, note: a.data.status_note }} /></span>}
       </form>
       {wl.length > 0 && (
         <div className="flex flex-wrap items-center gap-1.5 text-xs">

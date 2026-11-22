@@ -341,7 +341,7 @@ export default function Dashboard() {
             <LiveQuote
               symbol={symbol}
               initial={ov.data?.quote}
-              close={ov.data && { value: ov.data.price.close, change: ov.data.price.change_1d, as_of: ov.data.confirmed_as_of, status: ov.data.session.session === "closed" ? "CLOSED" : "DELAYED", provider: ov.data.price.provider, note: "daily close from the history provider" }}
+              close={ov.data && { value: ov.data.price.close, change: ov.data.price.change_1d, as_of: ov.data.confirmed_as_of, status: ov.data.price.status, provider: ov.data.price.provider, note: ov.data.price.note ?? "daily close from the history provider" }}
             />
           </span>
         )}

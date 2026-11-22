@@ -2,7 +2,7 @@ name: windows-app
 on:
   push:
     branches: [main, "claude/**"]
-    paths: ["backend/**", "frontend/**", "packaging/**", "sample-data/**", ".github/workflows/windows-app.yml"]
+    paths: ["backend/**", "frontend/**", "packaging/**", ".github/workflows/windows-app.yml"]
   workflow_dispatch:
 
 jobs:
@@ -38,13 +38,15 @@ jobs:
           $ok = $false
           for ($i = 0; $i -lt 90; $i++) { try { if ((Invoke-RestMethod http://127.0.0.1:8765/api/health).ok) { $ok = $true; break } } catch {}; Start-Sleep 2 }
           if (-not $ok) { Get-Content out.txt, err.txt; throw "server did not start" }
-          $ov = Invoke-RestMethod http://127.0.0.1:8765/api/overview
-          "overview: $($ov.symbol) $($ov.as_of) regime=$($ov.cards.regime.display) bottom=$($ov.cards.bottom.value)"
           if ((Invoke-WebRequest http://127.0.0.1:8765/ -UseBasicParsing).StatusCode -ne 200) { throw "UI not served" }
-          $bt = Invoke-RestMethod -Method Post -ContentType 'application/json' -Body '{"strategy":"trend200","symbol":"^GSPC"}' http://127.0.0.1:8765/api/backtest
-          "walk-forward OOS days: $($bt.oos.n_days)"
-          if ($bt.oos.n_days -lt 1000) { throw "backtest failed" }
-          Start-Sleep 60
-          "ingestion status: $((Invoke-RestMethod http://127.0.0.1:8765/api/admin/ingest) | ConvertTo-Json -Compress)"
+          $st = Invoke-RestMethod http://127.0.0.1:8765/api/status
+          "session: $($st.session.session)  access: $($st.licensing.access_mode)  streams: $($st.streams.Count)"
+          # Keyless live source: official Cboe VIX history fetched over the internet right now (nothing bundled).
+          $vix = Invoke-RestMethod http://127.0.0.1:8765/api/chart/%5EVIX
+          "VIX via $($vix.provider): $($vix.bars.Count) sessions through $($vix.last_confirmed)"
+          if ($vix.provider -ne "cboe" -or $vix.bars.Count -lt 5000) { throw "Cboe VIX history not fetched" }
+          # Without equity keys the dashboard must say so (503), never show bundled or invented prices.
+          try { Invoke-RestMethod http://127.0.0.1:8765/api/overview | Out-Null; throw "overview answered without a price provider" }
+          catch { if ($_.Exception.Response.StatusCode.value__ -ne 503) { throw } ; "overview without keys: 503 as expected" }
           Stop-Process -Id $p.Id -Force
           Get-Content "$env:LOCALAPPDATA\SMBT\smbt.log" -Tail 15

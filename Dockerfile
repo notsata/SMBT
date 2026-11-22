@@ -1,4 +1,4 @@
-# One image: FastAPI API + static Next.js PWA. The worker runs the same image with a different command.
+# One image, one process: FastAPI (API + WebSocket + background refresh loops) serving the static Next.js PWA. No database.
 FROM node:22-alpine AS web
 WORKDIR /web
 COPY frontend/package.json frontend/package-lock.json ./
@@ -13,7 +13,6 @@ WORKDIR /app/backend
 COPY backend/requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 COPY backend/app ./app
-COPY sample-data /app/sample-data
 COPY --from=web /web/out /app/frontend/out
 RUN useradd --create-home --uid 10001 smbt
 USER smbt
