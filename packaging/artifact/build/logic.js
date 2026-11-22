@@ -62,12 +62,19 @@
     return { session, today: date, tradingDay: td, lastCompleted: last };
   }
   /**
-   * Status for an Alpha Vantage quote. AV reports only the trading day, not a trade timestamp, so a quote is
-   * LIVE only when the viewer asked for the real-time entitlement, AV accepted it, and the session is open today.
+   * Status for a quote. With the provider's own quote time (Twelve Data) the age decides during regular hours:
+   * at most 2 minutes old is LIVE, at most 20 minutes DELAYED, older STALE. Without it (Alpha Vantage reports only the
+   * trading day) a quote is LIVE only when the real-time entitlement was requested and accepted.
    */
-  function quoteStatus(latestDay, s, realtimeAccepted) {
+  function quoteStatus(latestDay, s, realtimeAccepted, quoteTsMs, nowMs) {
     if (!latestDay) return ["UNAVAILABLE", "No quote returned"];
     const open = s.session === "regular" || s.session === "premarket" || s.session === "afterhours";
+    if (quoteTsMs && s.session === "regular" && latestDay === s.today) {
+      const age = Math.max(0, Math.round((nowMs - quoteTsMs) / 1000)), mins = Math.round(age / 60);
+      if (age <= 120) return ["LIVE", `Last quote ${age} s old`];
+      if (age <= 1200) return ["DELAYED", `Last quote ${mins} min old`];
+      return ["STALE", `No new quote for ${mins} min during regular hours`];
+    }
     if (open && latestDay === s.today) {
       return realtimeAccepted && s.session === "regular"
         ? ["LIVE", "Real-time entitlement accepted by Alpha Vantage (no per-trade timestamp is provided)"]
@@ -77,9 +84,9 @@
     return ["STALE", `Provider's latest day is ${latestDay}, but ${s.lastCompleted} has closed`];
   }
 
-  // ---------- Alpha Vantage payloads ----------
-  // The connector wraps data as {"result": "<csv or json text>"} and failures as {"error": {"type", "message", "detail"}};
-  // plain Alpha Vantage JSON ({"Global Quote": ...}, {"Information": ...}) and bare CSV are accepted too.
+  // ---------- connector payloads ----------
+  // Both connectors wrap data as {"result": "<text>"}: Alpha Vantage as comma-separated values (or AV JSON), Twelve Data as
+  // semicolon-separated values. Failures: AV {"error": {"type", "message", "detail"}}, Twelve Data {"result": "Error: ..."}.
   function unwrap(p) {
     if (typeof p === "string") {
       const t = p.trim();
@@ -92,7 +99,7 @@
     }
     return p;
   }
-  const isCsv = (t) => { const head = t.split(/\r?\n/)[0]; return head.includes(",") && !head.includes(" "); }; // a header alone = no rows
+  const isCsv = (t) => { const head = t.split(/\r?\n/)[0]; return /[,;]/.test(head) && !head.includes(" "); }; // a header alone = no rows
   function providerMessage(p) {
     const u = unwrap(p);
     if (u && typeof u === "object" && !Array.isArray(u)) for (const k of ["Error Message", "Information", "Note"]) if (typeof u[k] === "string") return u[k];
@@ -104,8 +111,9 @@
     if (typeof u === "string") {
       if (!isCsv(u)) return null;
       const lines = u.split(/\r?\n/).filter(Boolean);
-      const head = lines[0].split(",").map((h) => h.trim());
-      return lines.slice(1).map((l) => Object.fromEntries(l.split(",").map((v, i) => [head[i], v.trim()])));
+      const sep = lines[0].includes(";") ? ";" : ",";
+      const head = lines[0].split(sep).map((h) => h.trim());
+      return lines.slice(1).map((l) => Object.fromEntries(l.split(sep).map((v, i) => [head[i], v.trim()])));
     }
     return u && typeof u === "object" ? u : null;
   }
@@ -115,17 +123,21 @@
     if (msg) throw new Error(msg);
     const d = asData(payload);
     let r = null;
-    if (Array.isArray(d)) { const x = d[0] || {}; r = { symbol: x.symbol, open: x.open, high: x.high, low: x.low, price: x.price, volume: x.volume, day: x.latestDay, prev: x.previousClose, change: x.change, pct: x.changePercent }; }
+    if (Array.isArray(d) && d[0] && "last_quote_at" in d[0]) { // Twelve Data
+      const x = d[0];
+      r = { symbol: x.symbol, name: x.name, exchange: x.exchange, open: x.open, high: x.high, low: x.low, price: x.close, volume: x.volume, day: x.datetime, prev: x.previous_close, change: x.change, pct: x.percent_change, ts: x.last_quote_at };
+    } else if (Array.isArray(d)) { const x = d[0] || {}; r = { symbol: x.symbol, open: x.open, high: x.high, low: x.low, price: x.price, volume: x.volume, day: x.latestDay, prev: x.previousClose, change: x.change, pct: x.changePercent }; }
     else if (d && d["Global Quote"]) { const q = d["Global Quote"]; r = { symbol: q["01. symbol"], open: q["02. open"], high: q["03. high"], low: q["04. low"], price: q["05. price"], volume: q["06. volume"], day: q["07. latest trading day"], prev: q["08. previous close"], change: q["09. change"], pct: q["10. change percent"] }; }
     if (!r || num(r.price) === null) return null; // AV answers an unknown symbol with an empty quote
-    return { symbol: r.symbol, open: num(r.open), high: num(r.high), low: num(r.low), last: num(r.price), volume: num(r.volume), day: r.day, prevClose: num(r.prev), change: num(r.change), changePct: num(r.pct) === null ? null : num(r.pct) / 100 };
+    return { symbol: r.symbol, name: r.name || null, exchange: r.exchange || null, open: num(r.open), high: num(r.high), low: num(r.low), last: num(r.price), volume: num(r.volume), day: r.day,
+      prevClose: num(r.prev), change: num(r.change), changePct: num(r.pct) === null ? null : num(r.pct) / 100, quoteTs: num(r.ts) === null ? null : num(r.ts) * 1000 };
   }
   function parseDaily(payload) { // -> bars oldest first
     const msg = providerMessage(payload);
     if (msg) throw new Error(msg);
     const d = asData(payload);
     let rows = [];
-    if (Array.isArray(d)) rows = d.map((x) => ({ t: x.timestamp, o: num(x.open), h: num(x.high), l: num(x.low), c: num(x.close), v: num(x.volume) }));
+    if (Array.isArray(d)) rows = d.map((x) => ({ t: x.datetime ?? x.timestamp, o: num(x.open), h: num(x.high), l: num(x.low), c: num(x.close), v: num(x.volume) }));
     else if (d) {
       const key = Object.keys(d).find((k) => k.startsWith("Time Series"));
       if (key) rows = Object.entries(d[key]).map(([t, x]) => ({ t, o: num(x["1. open"]), h: num(x["2. high"]), l: num(x["3. low"]), c: num(x["4. close"]), v: num(x["5. volume"]) }));

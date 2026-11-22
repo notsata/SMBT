@@ -69,7 +69,7 @@ td:last-child { text-align: right; font-family: var(--mono); }
 
 <div class="wrap">
   <header>
-    <div class="brand">SMBT <small>Turning-point research · runs on your Alpha Vantage connector</small></div>
+    <div class="brand">SMBT <small>Turning-point research · <span id="via">runs on your market-data connector</span></small></div>
     <div class="session" id="session"><span class="dot"></span><span>New York session</span></div>
   </header>
 
@@ -92,8 +92,8 @@ td:last-child { text-align: right; font-family: var(--mono); }
         <div class="opts" style="margin-top:8px">
           <button class="btn ghost" id="refresh" type="button">Refresh</button>
           <label><input type="checkbox" id="auto"> Auto-refresh every 60 s</label>
-          <label><input type="checkbox" id="rt"> Ask for real-time (premium keys)</label>
-          <label><input type="checkbox" id="full"> Full history (premium keys)</label>
+          <label id="rt-l" hidden><input type="checkbox" id="rt"> Ask for real-time (premium keys)</label>
+          <label id="full-l" hidden><input type="checkbox" id="full"> Full history (premium keys)</label>
         </div>
       </section>
       <section class="panel" aria-labelledby="c-h">
@@ -115,7 +115,7 @@ td:last-child { text-align: right; font-family: var(--mono); }
       <details class="panel src" id="diag"><summary>Connection details</summary><dl class="kv" id="d-kv"></dl></details>
     </div>
   </div>
-  <p class="note">Nothing is saved: symbols and settings last until you close this page. Data comes only from your own Alpha Vantage connector; no prices are bundled or estimated.</p>
+  <p class="note">Nothing is saved: symbols and settings last until you close this page. Data comes only from your own Twelve Data or Alpha Vantage connector; no prices are bundled or estimated.</p>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js" integrity="sha384-OK7vELvjHdhUFi31JYioPIcRHTROLdcDa6ZsNWgvgLaKj+9JqhU0Ad8g4wz3CXjA" crossorigin="anonymous"></script>
@@ -123,8 +123,15 @@ td:last-child { text-align: right; font-family: var(--mono); }
 <script>
 (() => {
   "use strict";
-  const SERVER = "Alpha Vantage MCP Server";
-  const T_QUOTE = "GLOBAL_QUOTE", T_DAILY = "TIME_SERIES_DAILY";
+  // The first connected provider wins: Twelve Data has timestamped quotes and 5,000 daily bars on its free plan.
+  const PROVIDERS = [
+    { server: "Twelve Data", name: "Twelve Data", quote: "get_quote", daily: "get_time_series", premiumOptions: false, limits: "8 requests a minute, 800 a day",
+      quoteArgs: (symbol) => ({ symbol }), dailyArgs: (symbol) => ({ symbol, interval: "1day", outputsize: 5000 }) },
+    { server: "Alpha Vantage MCP Server", name: "Alpha Vantage", quote: "GLOBAL_QUOTE", daily: "TIME_SERIES_DAILY", premiumOptions: true, limits: "1 request a second, 25 a day",
+      quoteArgs: (symbol, rt) => input("GLOBAL_QUOTE", { symbol, ...(rt ? { entitlement: "realtime" } : {}) }),
+      dailyArgs: (symbol, full) => input("TIME_SERIES_DAILY", { symbol, outputsize: full ? "full" : "compact" }) },
+  ];
+  let P = PROVIDERS[0];
   const DEFAULTS = ["SPY", "QQQ", "IWM", "DIA"];
   const $ = (id) => document.getElementById(id);
   const fmt = (v, d = 2) => (v === null || v === undefined || !Number.isFinite(v) ? "—" : v.toLocaleString(undefined, { minimumFractionDigits: d, maximumFractionDigits: d }));
@@ -138,7 +145,7 @@ td:last-child { text-align: right; font-family: var(--mono); }
     mem: new Map(), // symbol -> last results, this tab only, so switching back costs no requests
     gate: Promise.resolve(), nextAt: 0 };
   const REUSE_MS = 10 * 60 * 1000;
-  const SPACING_MS = 1300; // free Alpha Vantage keys refuse more than 1 request per second
+  const SPACING_MS = 1300; // free keys refuse bursts (Alpha Vantage: 1 request per second)
 
   // ---------- session clock ----------
   function renderSession() {
@@ -155,7 +162,7 @@ td:last-child { text-align: right; font-family: var(--mono); }
     b.hidden = false;
     b.innerHTML = `<div class="msg err"><b>${esc(title)}</b>${esc(body)}${actions}</div>`;
   }
-  const CONNECT_HELP = "In claude.ai, open Settings → Connectors, add “Alpha Vantage MCP Server” and enter your Alpha Vantage key (free at alphavantage.co). Then reopen this page.";
+  const CONNECT_HELP = "In claude.ai, open Settings → Connectors and connect Twelve Data (free account at twelvedata.com), or Alpha Vantage MCP Server. Then reopen this page.";
 
   // ---------- connector calls ----------
   function input(tool, wanted) { // only arguments the tool's schema declares; before the schema is known, just the symbol
@@ -164,10 +171,11 @@ td:last-child { text-align: right; font-family: var(--mono); }
     return Object.fromEntries(Object.entries(wanted).filter(([k]) => props.has(k)));
   }
   async function learnSchemas() {
-    for (const t of [T_QUOTE, T_DAILY]) {
+    if (!P.premiumOptions) return; // Twelve Data's arguments are fixed and known
+    for (const t of [P.quote, P.daily]) {
       if (st.props[t]) continue;
       try {
-        const d = await st.mcp.describeTool(SERVER, t);
+        const d = await st.mcp.describeTool(P.server, t);
         const p = d && d.inputSchema && d.inputSchema.properties;
         if (p) st.props[t] = new Set(Object.keys(p));
       } catch { /* no schema available yet (not allowed, or older viewer): keep minimal inputs */ }
@@ -182,25 +190,26 @@ td:last-child { text-align: right; font-family: var(--mono); }
     st.gate = run.catch(() => {});
     return run;
   }
-  const RATE = /spreading out|requests per (day|second)|rate limit/i;
+  const RATE = /spreading out|requests per (day|second)|rate limit|API credits|current minute/i;
   function friendly(m) { // provider text -> what to do; also recorded in Connection details
     st.errors.unshift(`${new Date().toLocaleTimeString()} provider: ${m}`.slice(0, 300));
     st.errors.length = Math.min(st.errors.length, 5);
     renderDiag();
+    if (/symbol\W.*(missing or invalid|not found)/i.test(m)) return `${P.name} doesn't recognise ${st.symbol}. Check the ticker.`;
     return RATE.test(m) && !/premium feature/i.test(m)
-      ? "Alpha Vantage's free-key limit was reached (1 request per second, 25 per day). Wait a minute and tap Refresh; if it keeps happening, today's 25 requests are used up."
+      ? `${P.name}'s plan limit was reached (${P.limits}). Wait a minute and tap Refresh; if it keeps happening, today's allowance is used up.`
       : m;
   }
   async function callNow(tool, args) {
     st.calls++;
     try {
-      const r = await st.mcp.callTool(SERVER, tool, args, { cache: false });
+      const r = await st.mcp.callTool(P.server, tool, args, { cache: false });
       return r.payload !== undefined ? r.payload : (r.content || []).filter((c) => c.type === "text").map((c) => c.text).join("\n");
     } catch (e) {
       if (e && e.retryable) { // at most one unattended retry, reads only
         await new Promise((res) => setTimeout(res, Math.min(e.retryAfterMs || 1500 + Math.random() * 1000, 60000)));
         st.calls++;
-        const r = await st.mcp.callTool(SERVER, tool, args, { cache: false });
+        const r = await st.mcp.callTool(P.server, tool, args, { cache: false });
         return r.payload !== undefined ? r.payload : "";
       }
       throw e;
@@ -212,29 +221,29 @@ td:last-child { text-align: right; font-family: var(--mono); }
     st.errors.unshift(`${new Date().toLocaleTimeString()} ${code || "error"}: ${e && e.message ? e.message : e}`.slice(0, 300));
     st.errors.length = Math.min(st.errors.length, 5);
     renderDiag();
-    if (code === "server_not_connected" || code === "selection_required") { banner("Alpha Vantage isn't connected", " " + CONNECT_HELP); return null; }
-    if (code === "needs_reauth") { banner("Reconnect Alpha Vantage", " Your connector needs to sign in again: claude.ai → Settings → Connectors."); return null; }
-    if (code === "not_in_manifest") { banner("This page isn't allowed to use Alpha Vantage", " Allow it from the page's permissions.", ' <button class="btn ghost" id="perm" type="button">Permissions</button>'); $("perm") && ($("perm").onclick = () => st.perms && st.perms.manage().catch(() => {})); return null; }
-    if (code === "approval_required") { banner("Approval needed", " Tap Refresh to approve the Alpha Vantage request."); return null; }
-    if (code === "blocked_by_policy") { banner("Blocked by your organization", " Your organization's policy blocks this Alpha Vantage tool."); return null; }
+    if (code === "server_not_connected" || code === "selection_required") { banner(`${P.name} isn't connected`, " " + CONNECT_HELP); return null; }
+    if (code === "needs_reauth") { banner(`Reconnect ${P.name}`, " Your connector needs to sign in again: claude.ai → Settings → Connectors."); return null; }
+    if (code === "not_in_manifest") { banner(`This page isn't allowed to use ${P.name}`, " Allow it from the page's permissions.", ' <button class="btn ghost" id="perm" type="button">Permissions</button>'); $("perm") && ($("perm").onclick = () => st.perms && st.perms.manage().catch(() => {})); return null; }
+    if (code === "approval_required") { banner("Approval needed", ` Tap Refresh to approve the ${P.name} request.`); return null; }
+    if (code === "blocked_by_policy") { banner("Blocked by your organization", ` Your organization's policy blocks this ${P.name} tool.`); return null; }
     if (code === "tool_error") { // the connector's own words: rate limit, premium-only feature, unknown symbol
       const r = e.result || {}, text = (r.content || []).filter((c) => c.type === "text").map((c) => c.text).join("\n");
       const said = SMBT.providerMessage(r.structuredContent) || SMBT.providerMessage(text) || SMBT.providerMessage(e.message);
-      return said ? friendly(said) : "Alpha Vantage reported an error.";
+      return said ? friendly(said) : `${P.name} reported an error.`;
     }
-    if (code === "server_unavailable" || code === "upstream_error") return "Alpha Vantage didn't answer. Try Refresh in a moment.";
+    if (code === "server_unavailable" || code === "upstream_error") return `${P.name} didn't answer. Try Refresh in a moment.`;
     return (e && e.message) || "The request failed.";
   }
 
   // ---------- quote ----------
   async function loadQuote(id) {
-    const wantRt = $("rt").checked;
-    const args = input(T_QUOTE, { symbol: st.symbol, ...(wantRt ? { entitlement: "realtime" } : {}) });
+    const wantRt = P.premiumOptions && $("rt").checked;
+    const args = P.quoteArgs(st.symbol, wantRt);
     try {
-      const q = SMBT.parseQuote(await call(T_QUOTE, args));
+      const q = SMBT.parseQuote(await call(P.quote, args));
       if (id !== st.loadId) return;
       st.quote = q; st.quoteAt = new Date(); st.quoteRealtime = wantRt && "entitlement" in args;
-      if (!q) { renderQuoteError(`Alpha Vantage returned no quote for ${st.symbol}. Check the ticker.`); return; }
+      if (!q) { renderQuoteError(`${P.name} returned no quote for ${st.symbol}. Check the ticker.`); return; }
     } catch (e) {
       if (id !== st.loadId) return;
       const m = e instanceof Error && !e.code ? friendly(e.message) : explain(e);
@@ -256,26 +265,28 @@ td:last-child { text-align: right; font-family: var(--mono); }
   }
   function renderQuote() {
     const q = st.quote, s = renderSession();
-    $("q-sym").textContent = st.symbol;
+    $("q-sym").textContent = q && q.name ? `${st.symbol} · ${q.name}` : st.symbol;
     if (!q) return;
-    const [status, reason] = SMBT.quoteStatus(q.day, s, st.quoteRealtime);
+    const [status, reason] = SMBT.quoteStatus(q.day, s, st.quoteRealtime, q.quoteTs, Date.now());
     $("quote").innerHTML = `<span class="px">${fmt(q.last)}</span><span class="chg ${cls(q.change)}">${q.change > 0 ? "+" : ""}${fmt(q.change)} (${pct(q.changePct, 2, true)})</span>
       <span class="badge b-${status}" title="${esc(reason)}">${status}</span>`;
-    $("q-time").textContent = `trading day ${q.day} · fetched ${st.quoteAt.toLocaleTimeString()}`;
-    kv($("q-kv"), [["Provider", "Alpha Vantage, through your claude.ai connector"], ["Tool", T_QUOTE], ["Trading day", q.day], ["Fetched", st.quoteAt.toLocaleString()],
-      ["Session", s.session], ["Known delay", st.quoteRealtime ? "real-time entitlement requested and accepted" : "not reported by the provider"],
+    $("q-time").textContent = q.quoteTs ? `last quote ${new Date(q.quoteTs).toLocaleString()}` : `trading day ${q.day} · fetched ${st.quoteAt.toLocaleTimeString()}`;
+    kv($("q-kv"), [["Provider", `${P.name}, through your claude.ai connector`], ["Tool", P.quote], ["Exchange", q.exchange], ["Trading day", q.day],
+      ["Last quote (provider time)", q.quoteTs ? new Date(q.quoteTs).toLocaleString() : "not reported"], ["Fetched", st.quoteAt.toLocaleString()],
+      ["Session", s.session], ["Known delay", q.quoteTs ? "measured from the quote's own time (see Status)" : st.quoteRealtime ? "real-time entitlement requested and accepted" : "not reported by the provider"],
       ["Open / high / low", `${fmt(q.open)} / ${fmt(q.high)} / ${fmt(q.low)}`], ["Volume", q.volume === null ? "—" : q.volume.toLocaleString()],
       ["Previous close", fmt(q.prevClose)], ["Status", `${status}: ${reason}`],
-      ["Method", "Alpha Vantage quote endpoint. It reports the trading day but no trade time, so LIVE is shown only with an accepted real-time entitlement during regular hours."]]);
+      ["Method", q.quoteTs ? "During regular hours: LIVE when the provider's last quote is at most 2 minutes old, DELAYED up to 20 minutes, STALE beyond. Outside regular hours: the last session's close."
+        : "Alpha Vantage quote endpoint. It reports the trading day but no trade time, so LIVE is shown only with an accepted real-time entitlement during regular hours."]]);
     drawLiveCandle();
   }
 
   // ---------- daily history, indicators, state ----------
   async function loadDaily(id) {
-    let payload, full = $("full").checked; // free keys get the last 100 sessions; full history is an Alpha Vantage premium feature
-    st.compactOnly = !full;
+    let payload, full = P.premiumOptions && $("full").checked; // Alpha Vantage free keys get the last 100 sessions; full history is premium there
+    st.compactOnly = P.premiumOptions && !full;
     try {
-      payload = await call(T_DAILY, input(T_DAILY, { symbol: st.symbol, outputsize: full ? "full" : "compact" }));
+      payload = await call(P.daily, P.dailyArgs(st.symbol, full));
       SMBT.parseDaily(payload); // throws on a provider message
     } catch (e) {
       if (id !== st.loadId) return;
@@ -283,7 +294,7 @@ td:last-child { text-align: right; font-family: var(--mono); }
       if (full && m && /premium/i.test(m)) { // key lacks full history: say so and use the compact series once
         $("full").checked = false; st.compactOnly = true; full = false;
         banner("Full history needs an Alpha Vantage premium key", " Showing the last 100 sessions.");
-        try { payload = await call(T_DAILY, input(T_DAILY, { symbol: st.symbol, outputsize: "compact" })); }
+        try { payload = await call(P.daily, P.dailyArgs(st.symbol, false)); }
         catch (e2) { return renderDailyError(e2 instanceof Error && !e2.code ? friendly(e2.message) : explain(e2)); }
       } else return m && renderDailyError(m);
     }
@@ -362,9 +373,9 @@ td:last-child { text-align: right; font-family: var(--mono); }
 
   // ---------- diagnostics ----------
   function renderDiag() {
-    kv($("d-kv"), [["Connector", SERVER], ["Tools", st.tools ? st.tools.join(", ") || "none listed" : "not checked yet"],
-      ["Quote inputs", st.props[T_QUOTE] ? [...st.props[T_QUOTE]].join(", ") : "symbol only (schema not available)"],
-      ["Daily inputs", st.props[T_DAILY] ? [...st.props[T_DAILY]].join(", ") : "symbol only (schema not available)"],
+    kv($("d-kv"), [["Connector", P.server], ["Connected", st.available ? st.available.join(", ") || "none" : "not checked yet"],
+      ["Tools", st.tools ? st.tools.join(", ") || "none listed" : "not checked yet"], ["Limits", P.limits],
+      ["Quote inputs", JSON.stringify(P.quoteArgs(st.symbol, false))], ["Daily inputs", JSON.stringify(P.dailyArgs(st.symbol, false))],
       ["History depth", st.compactOnly ? "compact (100 sessions)" : "full"], ["Requests this visit", String(st.calls)],
       ["Recent errors", st.errors.join(" | ") || "none"]]);
   }
@@ -401,27 +412,34 @@ td:last-child { text-align: right; font-family: var(--mono); }
   $("refresh").onclick = () => { if (!st.mcp) return; banner(null); loadQuote(st.loadId).then(() => !st.bars && loadDaily(st.loadId)); };
   $("auto").onchange = () => {
     clearInterval(st.timer); st.timer = null;
-    if ($("auto").checked) st.timer = setInterval(() => { if (document.visibilityState === "visible" && SMBT.sessionAt(new Date()).session !== "closed") loadQuote(st.loadId); }, 60000);
+    if ($("auto").checked) st.timer = setInterval(() => { if (document.visibilityState === "visible" && SMBT.sessionAt(new Date()).session === "regular") loadQuote(st.loadId); }, 60000);
   };
   $("rt").onchange = () => st.mcp && loadQuote(st.loadId);
   $("full").onchange = () => st.mcp && loadDaily(st.loadId);
-  renderChips(); renderSession(); renderDiag(); setInterval(renderSession, 30000);
+  renderChips(); renderSession(); renderDiag();
+  setInterval(() => { renderSession(); if (st.quote) renderQuote(); }, 15000); // quote age and session labels move with the clock
 
   (async () => {
     const mcp = window.claude && window.claude.use ? await window.claude.use("mcp") : null;
     st.perms = window.claude && window.claude.use ? await window.claude.use("permissions").catch(() => null) : null;
     if (!mcp) {
-      banner("Open this page in the Claude app or on claude.ai", " It reads market data through your Alpha Vantage connector, which only works inside Claude. " + CONNECT_HELP);
+      banner("Open this page in the Claude app or on claude.ai", " It reads market data through your Twelve Data or Alpha Vantage connector, which only works inside Claude. " + CONNECT_HELP);
       $("quote").innerHTML = '<span class="badge b-UNAVAILABLE">UNAVAILABLE</span><span class="muted">No connector access in this view.</span>';
       return;
     }
     st.mcp = mcp;
     try {
-      const lt = await mcp.listTools(SERVER);
-      const srv = lt.servers.find((s) => s.server === SERVER);
+      const lt = await mcp.listTools();
+      const listed = (p) => lt.servers.find((s) => s.server === p.server && s.tools.length);
+      st.available = PROVIDERS.filter(listed).map((p) => p.name);
+      P = PROVIDERS.find(listed) || PROVIDERS[0];
+      const srv = listed(P);
       st.tools = srv ? srv.tools.map((t) => t.name) : [];
-      if (!srv) { banner("Alpha Vantage isn't connected", " " + CONNECT_HELP); renderDiag(); return; }
-      if (srv.authStatus === "needs_reauth") { banner("Reconnect Alpha Vantage", " Your connector needs to sign in again: claude.ai → Settings → Connectors."); return; }
+      $("via").textContent = `runs on your ${P.name} connector`;
+      $("rt-l").hidden = $("full-l").hidden = !P.premiumOptions;
+      if (!srv) { banner("No market-data connector", " " + CONNECT_HELP); renderDiag(); return; }
+      if (srv.authStatus === "needs_reauth") { banner(`Reconnect ${P.name}`, " Your connector needs to sign in again: claude.ai → Settings → Connectors."); return; }
+      if (!P.premiumOptions) { $("auto").checked = true; $("auto").onchange(); } // timestamped quotes: keep them current while the market is open
     } catch (e) { explain(e); }
     renderDiag();
     select(st.symbol);
