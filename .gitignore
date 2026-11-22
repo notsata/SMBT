@@ -9,3 +9,5 @@ frontend/out/
 frontend/next-env.d.ts
 frontend/*.tsbuildinfo
 .DS_Store
+packaging/windows/build/
+dist/

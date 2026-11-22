@@ -22,38 +22,42 @@ def vapid_keys() -> dict:
     return {"VAPID_PUBLIC_KEY": b64(pub), "VAPID_PRIVATE_KEY": b64(der)}
 
 
-def worker() -> None:
-    """Daily EOD pipeline: ingest -> recompute -> alerts. Runs after the US close and data vendors' EOD update."""
-    from apscheduler.schedulers.blocking import BlockingScheduler
-
+def daily_job() -> None:
+    """EOD pipeline: ingest -> recompute (cache invalidated by data version) -> alerts."""
     from .alerts import evaluate_all
     from .data.ingest import run_ingest
 
-    def job():
-        s = session()
-        try:
-            res = run_ingest(s)
-            log.info("ingest done: %d jobs, %d errors", len(res), sum(r["status"] == "error" for r in res))
-            fired = evaluate_all(s)
-            log.info("alerts fired: %d", len(fired))
-        except Exception:
-            log.exception("daily job failed")
-            s.rollback()
-        finally:
-            s.close()
+    s = session()
+    try:
+        res = run_ingest(s)
+        log.info("ingest done: %d jobs, %d errors", len(res), sum(r["status"] == "error" for r in res))
+        log.info("alerts fired: %d", len(evaluate_all(s)))
+    except Exception:
+        log.exception("daily job failed")
+        s.rollback()
+    finally:
+        s.close()
 
-    sched = BlockingScheduler(timezone="America/New_York")
+
+def add_schedule(sched, job) -> None:
+    """After the US close and vendors' EOD update, plus a Saturday catch-up."""
     sched.add_job(job, "cron", day_of_week="mon-fri", hour=18, minute=15, id="eod", max_instances=1, coalesce=True, misfire_grace_time=3600)
     sched.add_job(job, "cron", day_of_week="sat", hour=9, minute=0, id="weekly-catchup", max_instances=1, coalesce=True)
-    s = session()
+
+
+def worker() -> None:
+    from apscheduler.schedulers.blocking import BlockingScheduler
+
     from .db import kv_get
 
-    if not (kv_get(s, "data_version") or {}).get("v"):
+    sched = BlockingScheduler(timezone="America/New_York")
+    add_schedule(sched, daily_job)
+    s = session()
+    empty = not (kv_get(s, "data_version") or {}).get("v")
+    s.close()
+    if empty:
         log.info("empty database: running initial ingest now")
-        s.close()
-        job()
-    else:
-        s.close()
+        daily_job()
     log.info("scheduler started (EOD job 18:15 America/New_York, Mon-Fri)")
     sched.start()
 
