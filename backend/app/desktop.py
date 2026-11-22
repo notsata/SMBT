@@ -1,8 +1,6 @@
-"""Desktop launcher (the Windows .exe entry point): local server + daily scheduler + browser.
-
-Data lives in %LOCALAPPDATA%\\SMBT (smbt.db, settings.env, smbt.log), so reinstalling or upgrading keeps it.
-Listens on 127.0.0.1 only, so no access token is needed. Close the window to stop.
-"""
+"""Desktop launcher (the Windows .exe entry point): runs the terminal on 127.0.0.1 in personal mode and opens
+the browser. Provider API keys are read from %LOCALAPPDATA%\\SMBT\\settings.env (operator configuration; no market
+data or user data is stored). Close the window to stop."""
 
 import logging
 import os
@@ -15,14 +13,26 @@ import webbrowser
 from pathlib import Path
 
 PORT = 8765
-SETTINGS_TEMPLATE = """# SMBT desktop settings. Edit, save, then restart SMBT.
-# Optional free keys improve data quality (see docs/DATA_SOURCES.md):
-FRED_API_KEY=
+SETTINGS_TEMPLATE = """# SMBT desktop settings. Add your provider keys, save, then restart SMBT.
+# Without at least one price provider the app shows UNAVAILABLE instead of data. See docs/DATA_SOURCES.md.
+#
+# Streaming + recent history (free Basic plan: real-time IEX, 30 symbols; or ALPACA_FEED=sip / delayed_sip)
+ALPACA_API_KEY_ID=
+ALPACA_API_SECRET_KEY=
+ALPACA_FEED=iex
+# Long dividend-adjusted daily history for backtests (free key)
 TIINGO_API_KEY=
-# Optional: enables the AI analyst page.
+# Alternative/extra: Massive (formerly Polygon.io). Set the flags to match your plan.
+MASSIVE_API_KEY=
+MASSIVE_REALTIME=false
+MASSIVE_INDICES=false
+MASSIVE_OPTIONS=false
+# Macro first-release vintages (free key)
+FRED_API_KEY=
+# Fundamentals, market cap, sector, S&P 500 membership
+FMP_API_KEY=
+# AI analyst
 ANTHROPIC_API_KEY=
-# Optional: historical S&P 500 membership CSV (date,tickers) to remove breadth survivorship bias.
-SP500_HISTORY_URL=
 """
 
 
@@ -64,52 +74,31 @@ def main() -> int:
         import ctypes
 
         ctypes.windll.kernel32.SetConsoleTitleW("SMBT - close this window to stop")
-    if healthy(PORT):  # already running: just bring up the UI
+    if healthy(PORT):
         webbrowser.open(f"http://127.0.0.1:{PORT}/")
         return 0
     load_settings(d / "settings.env")
-    os.environ.setdefault("DATABASE_URL", f"sqlite:///{(d / 'smbt.db').as_posix()}")
-    os.environ.setdefault("COOKIE_SECURE", "false")
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-                        handlers=[logging.FileHandler(d / "smbt.log", encoding="utf-8"), logging.StreamHandler(sys.stdout)])
-    log = logging.getLogger("smbt.desktop")
+    os.environ.setdefault("ACCESS_MODE", "personal")  # local, single user: personal-use provider plans apply
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s", handlers=[logging.StreamHandler(sys.stdout)])
 
     import uvicorn
-    from apscheduler.schedulers.background import BackgroundScheduler
 
-    from .cli import add_schedule
-    from .data.ingest import load_sample_data
-    from .db import init_db, kv_get, session
-    from .main import _bg_ingest, app
-
-    init_db()
-    s = session()
-    first_run = not (kv_get(s, "data_version") or {}).get("v")
-    if first_run:
-        log.info("first run: loading bundled sample data so the app works immediately")
-        load_sample_data(s)
-    s.close()
+    from .main import app
 
     port = free_port(PORT)
     url = f"http://127.0.0.1:{port}/"
-    sched = BackgroundScheduler(timezone="America/New_York")
-    add_schedule(sched, _bg_ingest)  # same lock as the in-app "Run ingestion now" button
-    sched.start()
 
     def after_start():
-        for _ in range(100):
+        for _ in range(150):
             if healthy(port):
                 break
             time.sleep(0.2)
-        print(f"\n  SMBT is running at {url}\n  Data folder: {d}\n  Keep this window open while you use the app; close it to stop.\n", flush=True)
+        print(f"\n  SMBT is running at {url}\n  Provider keys: {d / 'settings.env'}\n  Keep this window open while you use the app; close it to stop.\n", flush=True)
         if os.environ.get("SMBT_NO_BROWSER") != "1":
             webbrowser.open(url)
-        log.info("refreshing market data in the background (first run takes several minutes)")
-        _bg_ingest()
 
     threading.Thread(target=after_start, daemon=True).start()
     uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning")).run()
-    sched.shutdown(wait=False)
     return 0
 
 

@@ -23,8 +23,8 @@ export const viewport: Viewport = {
   ],
 };
 
-// Runs before paint so there is no light/dark flash. Default is dark.
-const themeInit = `try{var t=localStorage.getItem('smbt-theme')||'dark';var d=t==='dark'||(t==='system'&&matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.classList.toggle('dark',d)}catch(e){document.documentElement.classList.add('dark')}`;
+// Follows the system theme before first paint; nothing is read from or written to browser storage.
+const themeInit = `document.documentElement.classList.toggle('dark',!matchMedia('(prefers-color-scheme: light)').matches)`;
 
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (

@@ -105,8 +105,6 @@ BOTTOM: list[Component] = [
               lambda f: recent(flag(f, "washout_day"), 10).astype(float).where(col(f, "zweig_ema").notna()), ">=90% decliners"),
     Component("vix_high", "VIX elevated", "sentiment", lambda f: P(col(f, "vix")), "percentile of VIX"),
     Component("vix_backwardation", "VIX term structure inverted", "sentiment", lambda f: P(col(f, "vix_term")), "percentile of VIX/VIX3M"),
-    Component("putcall_high", "Put/call elevated", "sentiment", lambda f: P(col(f, "pcr10")), "percentile of 10d equity P/C"),
-    Component("aaii_bearish", "AAII bearish", "sentiment", lambda f: 1 - P(col(f, "aaii_spread"), 100), "1 - percentile of bull-bear spread"),
     Component("fear", "Fear & Greed (fear)", "sentiment", lambda f: 1 - col(f, "fear_greed") / 100, "1 - reconstructed F&G/100"),
     Component("hv_high", "Realized volatility high", "sentiment", lambda f: P(f["hv20"]), "percentile of 20d HV"),
     Component("credit_easing", "Credit stress easing from high", "macro",
@@ -127,15 +125,12 @@ TOP: list[Component] = [
               lambda f: ((f["drawdown"] > -0.03) & (col(f, "nhnl_pct").rolling(20).mean() < 0)).astype(float).where(col(f, "nhnl_pct").notna()), "near index high with net new lows"),
     Component("vix_low", "VIX complacency", "sentiment", lambda f: 1 - P(col(f, "vix")), "1 - percentile of VIX"),
     Component("contango", "Steep VIX contango", "sentiment", lambda f: 1 - P(col(f, "vix_term")), "1 - percentile of VIX/VIX3M"),
-    Component("putcall_low", "Put/call low", "sentiment", lambda f: 1 - P(col(f, "pcr10")), "1 - percentile of 10d P/C"),
-    Component("aaii_bullish", "AAII bullish", "sentiment", lambda f: P(col(f, "aaii_spread"), 100), "percentile of bull-bear spread"),
     Component("greed", "Fear & Greed (greed)", "sentiment", lambda f: col(f, "fear_greed") / 100, "reconstructed F&G/100"),
     Component("uninversion", "Yield curve un-inverting", "macro", lambda f: flag(f, "curve_uninversion").astype(float).where(col(f, "curve_10y2y").notna()), "10y-2y > 0 after >= 60 inverted days in past year"),
     Component("credit_widening", "Credit spreads widening", "macro", lambda f: P(col(f, "credit_chg63")), "percentile of 63d spread change"),
     Component("fed_tightening", "Fed tightening", "macro", lambda f: (col(f, "fed_chg252") / 2.0).clip(0, 1), "12m fed funds change / 200bp"),
     Component("sahm", "Unemployment rising (Sahm)", "macro", lambda f: (col(f, "sahm") / 0.5).clip(0, 1), "Sahm gap / 0.5pp"),
-    Component("valuation", "Valuation stretched", "macro",
-              lambda f: P(col(f, "cape"), 60).fillna(P(col(f, "mcap_gdp"), 20)), "percentile of CAPE or market cap/GDP"),
+    Component("valuation", "Valuation stretched", "macro", lambda f: P(col(f, "mcap_gdp"), 20), "percentile of market cap / GDP"),
 ]
 
 # Category weights by regime. Bottoms in bull markets are shallow technical dips; in bear markets they are

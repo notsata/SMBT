@@ -1,161 +1,183 @@
 "use client";
 
-import Link from "next/link";
 import { useEffect, useState } from "react";
 import { applyTheme } from "@/components/Shell";
-import { Badge, ErrorBox, Note, Panel, Segmented, Spinner, Td, Th } from "@/components/ui";
-import { api, type Status } from "@/lib/api";
+import { Badge, ErrorBox, Inspector, Note, Panel, Segmented, Spinner, StatusBadge, Td, Th } from "@/components/ui";
+import type { Status } from "@/lib/api";
+import { num } from "@/lib/format";
+import { useConnection } from "@/lib/live";
 import { useApi } from "@/lib/useApi";
 
-function Theme() {
-  const [t, setT] = useState<"dark" | "light" | "system">("dark");
-  useEffect(() => {
-    try {
-      setT((localStorage.getItem("smbt-theme") as "dark" | "light" | "system") || "dark");
-    } catch {
-      /* ignore */
-    }
-  }, []);
+type Theme = "dark" | "light" | "system";
+
+/** Theme for this tab only: read from the page, never from storage. */
+function ThemePicker() {
+  const [t, setT] = useState<Theme>("system");
+  useEffect(() => setT((document.documentElement.getAttribute("data-theme") as Theme | null) ?? "system"), []);
   return (
     <Segmented label="Theme" value={t} onChange={(v) => { setT(v); applyTheme(v); }} options={[{ value: "dark", label: "Dark" }, { value: "light", label: "Light" }, { value: "system", label: "System" }]} />
   );
 }
 
-function Watchlist() {
-  const wl = useApi<string[]>("/watchlist");
-  const [s, setS] = useState("");
-  const [err, setErr] = useState("");
-  return (
-    <Panel title="Watchlist (synced across devices)">
-      <form onSubmit={async (e) => {
-        e.preventDefault();
-        if (!s.trim()) return;
-        try {
-          await api(`/watchlist/${encodeURIComponent(s.trim().toUpperCase())}`, { method: "POST" });
-          setS("");
-          setErr("");
-          wl.reload();
-        } catch (x) {
-          setErr((x as Error).message);
-        }
-      }} className="mb-2 flex gap-2">
-        <input value={s} onChange={(e) => setS(e.target.value)} placeholder="Add ticker" aria-label="Add ticker" className="rounded-lg border border-line bg-panel px-2 py-1.5 text-sm" />
-        <button className="rounded-lg border border-line px-3 text-sm">Add</button>
-      </form>
-      <div className="flex flex-wrap gap-2">
-        {wl.data?.map((x) => (
-          <span key={x} className="inline-flex items-center gap-1 rounded-lg border border-line px-2 py-1 text-sm">
-            <Link href={`/analyze/?s=${encodeURIComponent(x)}`} className="text-accent">{x}</Link>
-            <button aria-label={`Remove ${x}`} onClick={() => api(`/watchlist/${encodeURIComponent(x)}`, { method: "DELETE" }).then(wl.reload)} className="text-muted">✕</button>
-          </span>
-        ))}
-        {wl.data?.length === 0 && <span className="text-sm text-muted">Empty.</span>}
-      </div>
-      {err && <p className="mt-2 text-xs text-down">{err}</p>}
-    </Panel>
-  );
-}
-
-function Admin({ onDone }: { onDone: () => void }) {
-  const ing = useApi<{ state: string; errors?: number; jobs?: number; error?: string }>("/admin/ingest");
-  const [series, setSeries] = useState("AAII_SPREAD");
-  const [msg, setMsg] = useState("");
-  useEffect(() => {
-    if (ing.data?.state !== "running") return;
-    const t = setInterval(() => ing.reload(), 5000);
-    return () => clearInterval(t);
-  }, [ing]);
-  return (
-    <Panel title="Data operations">
-      <div className="flex flex-wrap items-center gap-2 text-sm">
-        <button onClick={() => api("/admin/ingest", { method: "POST" }).then(() => setTimeout(ing.reload, 500), (e: Error) => setMsg(e.message))} className="rounded-lg bg-accent px-3 py-1.5 font-medium text-white">Run ingestion now</button>
-        <span className="text-xs text-muted">status: {ing.data?.state}{ing.data?.jobs !== undefined && ` · ${ing.data.jobs} jobs, ${ing.data.errors} errors`}{ing.data?.error && ` · ${ing.data.error}`}</span>
-        <button onClick={() => api<{ bars: number }>("/admin/sample", { method: "POST" }).then((r) => { setMsg(`Loaded ${r.bars} sample bars`); onDone(); }, (e: Error) => setMsg(e.message))} className="rounded-lg border border-line px-3 py-1.5">Load sample data</button>
-      </div>
-      <div className="mt-4 flex flex-wrap items-center gap-2 text-sm">
-        <span>Import CSV (date,value[,available_at]) for</span>
-        <select aria-label="Series" value={series} onChange={(e) => setSeries(e.target.value)} className="rounded-lg border border-line bg-panel px-2 py-1">
-          {["AAII_SPREAD", "NAAIM", "PCR_EQUITY", "PCR_TOTAL", "SHORT_INTEREST", "CAPE"].map((s) => <option key={s}>{s}</option>)}
-        </select>
-        <input type="file" accept=".csv,text/csv" aria-label="CSV file" className="text-xs" onChange={async (e) => {
-          const f = e.target.files?.[0];
-          if (!f) return;
-          try {
-            const r = await api<{ rows: number }>(`/admin/import/${series}`, { method: "POST", body: await f.text(), headers: { "Content-Type": "text/csv" } });
-            setMsg(`Imported ${r.rows} rows into ${series}`);
-            onDone();
-          } catch (err) {
-            setMsg((err as Error).message);
-          }
-        }} />
-      </div>
-      {msg && <p className="mt-2 text-xs text-accent">{msg}</p>}
-      <Note>Use imports for licensed or membership data (AAII, NAAIM, put/call, short interest, CAPE). Provide available_at (publication date) when you know it; otherwise a conservative lag is applied.</Note>
-    </Panel>
-  );
-}
+const when = (iso?: string | null) => (iso ? new Date(iso).toLocaleString() : "—");
 
 export default function SettingsPage() {
   const st = useApi<Status>("/status");
-  const me = useApi<{ authenticated: boolean; auth_enabled: boolean }>("/auth/me");
+  const [conn] = useConnection().split("|");
   const s = st.data;
+  useEffect(() => {
+    const id = setInterval(st.reload, 15_000);
+    return () => clearInterval(id);
+  }, [st.reload]);
   return (
     <div className="space-y-4">
-      <h1 className="text-lg font-semibold">Settings &amp; data</h1>
-      <Panel title="App">
+      <h1 className="text-lg font-semibold">Data sources</h1>
+      <Panel title="This device">
         <div className="flex flex-wrap items-center gap-3 text-sm">
-          <Theme />
-          {me.data?.auth_enabled ? (
-            <button onClick={() => api("/auth/logout", { method: "POST" }).then(() => (location.href = "/login/"))} className="rounded-lg border border-line px-3 py-1.5">Sign out this device</button>
-          ) : (
-            <Badge tone="warn">Authentication disabled (APP_ACCESS_TOKEN not set)</Badge>
-          )}
+          <ThemePicker />
+          <Badge tone={conn === "open" ? "up" : "warn"}>live connection: {conn}</Badge>
         </div>
-        <Note>Install: iPhone Safari → Share → Add to Home Screen. Windows Chrome/Edge → install icon in the address bar. All devices share the same backend data, watchlist and alerts.</Note>
+        <Note>
+          No account, login or saved data: the theme, watchlist and alert rules last only while this tab is open, and nothing is written to browser storage. Install: iPhone Safari →
+          Share → Add to Home Screen; Windows Chrome/Edge → install icon in the address bar.
+        </Note>
       </Panel>
-      <Watchlist />
-      <Admin onDone={st.reload} />
-      {st.error && <ErrorBox error={st.error} />}
+      {st.error && <ErrorBox error={st.error} onRetry={st.reload} />}
       {!s && !st.error && <Spinner />}
       {s && (
         <>
-          <Panel title="Providers">
-            <div className="flex flex-wrap gap-2 text-xs">
-              {Object.entries(s.providers).map(([k, v]) => <Badge key={k} tone={v ? "up" : "muted"}>{k}: {v ? "configured" : "not configured"}</Badge>)}
-              <Badge tone={s.breadth.available ? "up" : "warn"}>breadth: {s.breadth.available ? `${s.breadth.with_data} members` : "unavailable"}</Badge>
+          <Panel title="Market session & licensing" right={<span className="num">server {when(s.now)}</span>}>
+            <div className="grid gap-2 text-sm sm:grid-cols-2">
+              <div>
+                Session: <b>{s.session.session}</b> ({s.session.date}{s.session.trading_day ? "" : ", not a trading day"}){s.session.early_close && <Badge tone="warn">early close</Badge>}
+                <div className="text-xs text-muted">
+                  {s.session.open && `Regular hours ${when(s.session.open)} – ${when(s.session.close)} · `}next open {when(s.session.next_open)} · XNYS calendar
+                </div>
+              </div>
+              <div>
+                Access mode: <b>{s.licensing.access_mode}</b>
+                <div className="text-xs text-muted">
+                  Shown to visitors: {Array.isArray(s.licensing.licensed_for_public_display) ? s.licensing.licensed_for_public_display.join(", ") : s.licensing.licensed_for_public_display}
+                </div>
+              </div>
             </div>
+            <Note>
+              In public mode, data from a provider is served only if the operator declares a licence that permits public display for it (PUBLIC_DISPLAY_LICENSES); anything else returns
+              &ldquo;not licensed&rdquo; instead of a value.
+            </Note>
+          </Panel>
+
+          <Panel title="Streaming feeds">
+            {s.streams.length === 0 && <p className="text-sm text-muted">No streaming provider configured: prices are daily closes only, labelled DELAYED/CLOSED.</p>}
+            <div className="scroll-x">
+              <table className="w-full text-xs">
+                <thead><tr><Th>Provider</Th><Th>Feed</Th><Th>Kind</Th><Th>Delay</Th><Th>State</Th><Th>Symbols</Th><Th>Messages</Th><Th>Reconnects</Th><Th>Last message</Th><Th>Error</Th></tr></thead>
+                <tbody>
+                  {s.streams.map((x) => (
+                    <tr key={x.provider + x.feed}>
+                      <Td>{x.provider}{x.active && <Badge tone="accent">active</Badge>}</Td><Td>{x.feed}</Td><Td>{x.kind}</Td><Td>{x.delay_s ? `${Math.round(x.delay_s / 60)} min` : "real time"}</Td>
+                      <Td><Badge tone={x.state === "connected" ? "up" : x.state === "connecting" ? "warn" : "down"}>{x.state}</Badge></Td>
+                      <Td>{x.symbols}/{x.max_symbols || "∞"}</Td><Td>{x.messages.toLocaleString()}</Td><Td>{x.reconnects}</Td><Td className="text-muted">{when(x.last_message)}</Td>
+                      <Td className="max-w-[16rem] whitespace-normal text-down">{x.error}</Td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
+
+          <Panel title="Live symbols on this server">
+            {s.live.length === 0 && <p className="text-sm text-muted">No symbols streaming.</p>}
+            <div className="scroll-x">
+              <table className="w-full text-xs">
+                <thead><tr><Th>Symbol</Th><Th>Status</Th><Th>Last</Th><Th>Event time</Th><Th>Received</Th><Th>Provider</Th><Th>Events / dup / out-of-order / late</Th></tr></thead>
+                <tbody>
+                  {s.live.map((q) => (
+                    <tr key={q.symbol}>
+                      <Td>{q.symbol}</Td><Td><StatusBadge status={q.status} reason={q.reason} /></Td><Td>{num(q.last)}</Td><Td className="text-muted">{when(q.last_ts)}</Td>
+                      <Td className="text-muted">{when(q.recv_ts)}</Td><Td>{q.provider} {q.feed}</Td>
+                      <Td>{q.stats ? `${q.stats.events} / ${q.stats.duplicates} / ${q.stats.out_of_order} / ${q.stats.late}` : "—"}</Td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
+
+          <Panel title="Providers">
+            <ul className="grid gap-2 text-xs sm:grid-cols-2">
+              {Object.entries(s.providers).map(([k, v]) => (
+                <li key={k} className="rounded-lg bg-panel2 p-2">
+                  <div className="flex items-center gap-2">
+                    <b className="text-sm">{k}</b>
+                    <Badge tone={v.configured ? "up" : "muted"}>{v.configured ? "configured" : "no key"}</Badge>
+                  </div>
+                  <div className="text-muted">{v.roles.join(" · ")}</div>
+                  <Inspector rows={Object.entries(v).filter(([kk]) => !["configured", "roles"].includes(kk)).map(([kk, vv]) => [kk, String(vv)])} />
+                </li>
+              ))}
+            </ul>
+          </Panel>
+
+          <Panel title="Daily history (in memory, fetched on demand)">
+            <div className="scroll-x">
+              <table className="w-full text-xs">
+                <thead><tr><Th>Symbol</Th><Th>Provider</Th><Th>Adjustment</Th><Th>From</Th><Th>Last close</Th><Th>Complete</Th><Th>Fetched</Th><Th>Issues</Th></tr></thead>
+                <tbody>
+                  {s.history.map((h) => (
+                    <tr key={h.symbol} className={h.loaded ? "" : "text-muted"}>
+                      <Td>{h.symbol}</Td><Td>{h.loaded ? h.provider : "not loaded yet"}</Td><Td>{h.adjustment}</Td><Td>{h.first}</Td><Td>{h.last}</Td>
+                      <Td>{h.loaded && (h.complete_through_last_session ? <Badge tone="up">yes</Badge> : <Badge tone="warn">behind</Badge>)}</Td>
+                      <Td className="text-muted">{when(h.fetched_at)}</Td>
+                      <Td className="max-w-[18rem] whitespace-normal text-muted">{[...(h.issues ?? []), ...(h.provider_errors ?? [])].join("; ")}</Td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
+
+          <Panel title="Macro series (FRED, point-in-time)">
+            <div className="scroll-x">
+              <table className="w-full text-xs">
+                <thead><tr><Th>Series</Th><Th>Name</Th><Th>Freq</Th><Th>Last obs</Th><Th>Known from</Th><Th>FRED updated</Th><Th>Status</Th><Th>Notes</Th></tr></thead>
+                <tbody>
+                  {s.macro.map((m) => (
+                    <tr key={m.id} className={m.available ? "" : "text-muted"}>
+                      <Td>{m.id}</Td><Td className="whitespace-normal">{m.name}</Td><Td>{m.freq}</Td><Td>{m.last_obs ?? "—"}</Td><Td>{m.known_since ?? ""}</Td>
+                      <Td className="text-muted">{m.fred_last_updated ?? ""}</Td>
+                      <Td>
+                        {!m.available ? <Badge tone="down">unavailable</Badge> : m.current ? <Badge tone="accent">current</Badge> : <Badge tone="warn">stale</Badge>}
+                        {m.copyright && <Badge tone="warn" title="Copyrighted third-party series: excluded in public mode unless licensed">©</Badge>}
+                      </Td>
+                      <Td className="max-w-[18rem] whitespace-normal text-muted">{m.error ?? m.note}</Td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </Panel>
+
+          <Panel title="S&P 500 breadth">
+            <p className="text-sm">
+              {s.breadth.available ? (
+                <>
+                  {s.breadth.members_with_data_today}/{s.breadth.members_today} current members with data · {s.breadth.first} → {s.breadth.last} · {s.breadth.providers?.join(", ")}
+                  {s.breadth.provisional_as_of && ` · intraday snapshot ${when(s.breadth.provisional_as_of)}`}
+                </>
+              ) : (
+                <Badge tone="warn">unavailable</Badge>
+              )}
+            </p>
             {s.breadth.note && <Note>{s.breadth.note}</Note>}
           </Panel>
-          <Panel title="Price data" right={`${s.symbols_loaded} symbols loaded`}>
-            <div className="scroll-x">
-              <table className="w-full text-xs">
-                <thead><tr><Th>Symbol</Th><Th>From</Th><Th>Last bar</Th><Th>Rows</Th><Th>Source</Th><Th>Fetched</Th></tr></thead>
-                <tbody>{s.prices.map((p) => (
-                  <tr key={p.symbol}><Td>{p.symbol}</Td><Td>{p.first}</Td><Td>{p.last} {p.stale && <Badge tone="warn">stale</Badge>}</Td><Td>{p.rows}</Td><Td className="max-w-[18rem] truncate" >{p.source}</Td><Td className="text-muted">{p.fetched_at.slice(0, 16)}</Td></tr>
-                ))}</tbody>
-              </table>
-            </div>
-          </Panel>
-          <Panel title="Macro & sentiment series (point-in-time)">
-            <div className="scroll-x">
-              <table className="w-full text-xs">
-                <thead><tr><Th>Series</Th><Th>Name</Th><Th>Freq</Th><Th>Last obs</Th><Th>Known from</Th><Th>Source</Th><Th>Notes</Th></tr></thead>
-                <tbody>{s.series.map((x) => (
-                  <tr key={x.id} className={x.available ? "" : "text-muted"}>
-                    <Td>{x.id}</Td><Td className="whitespace-normal">{x.name}</Td><Td>{x.freq}</Td><Td>{x.last_obs ?? <Badge tone="muted">unavailable</Badge>}</Td><Td>{x.available_at ?? ""}</Td>
-                    <Td className="whitespace-normal">{x.source ?? x.default_source}</Td><Td className="whitespace-normal text-muted">{x.note}</Td>
-                  </tr>
-                ))}</tbody>
-              </table>
-            </div>
-          </Panel>
-          {s.recent_errors.length > 0 && (
-            <Panel title="Recent ingestion errors">
-              <ul className="space-y-1 text-xs">{s.recent_errors.map((e, i) => <li key={i}><b>{e.source}:{e.target}</b> <span className="text-muted">{e.at.slice(0, 16)}</span> — {e.message}</li>)}</ul>
-            </Panel>
-          )}
-          <Panel title="Metrics that need licensed data">
-            <ul className="space-y-1 text-xs text-muted">{Object.entries(s.unavailable).map(([k, v]) => <li key={k}><b className="text-fg/80">{k.replaceAll("_", " ")}</b>: {v}</li>)}</ul>
+
+          <Panel title="Not shown (no licensed or trustworthy source)">
+            <ul className="space-y-1 text-xs text-muted">
+              {Object.entries(s.limitations).map(([k, v]) => (
+                <li key={k}><b className="text-fg/80">{k.replaceAll("_", " ")}</b>: {v}</li>
+              ))}
+            </ul>
           </Panel>
         </>
       )}

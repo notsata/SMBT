@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { Badge, ErrorBox, Note, Panel, Spinner } from "@/components/ui";
-import { api, type AlertEvent, type AlertKinds, type AlertRule } from "@/lib/api";
+import type { AlertKinds, AlertRule } from "@/lib/api";
+import { live, useAlerts } from "@/lib/live";
 import { useApi } from "@/lib/useApi";
+import { useWatchlist } from "@/lib/watchlist";
 
 const COOLDOWNS = [
   { v: 60, l: "at most hourly" },
@@ -12,68 +14,35 @@ const COOLDOWNS = [
   { v: 10080, l: "at most weekly" },
 ];
 
-function b64ToUint8(b64: string) {
-  const pad = "=".repeat((4 - (b64.length % 4)) % 4);
-  const raw = atob((b64 + pad).replace(/-/g, "+").replace(/_/g, "/"));
-  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
-}
-
-function PushControl() {
-  const key = useApi<{ public_key: string | null }>("/push/key");
-  const [state, setState] = useState<string>("checking");
-  useEffect(() => {
-    (async () => {
-      if (!("serviceWorker" in navigator) || !("PushManager" in window)) return setState("unsupported");
-      const reg = await navigator.serviceWorker.getRegistration();
-      const sub = await reg?.pushManager.getSubscription();
-      setState(sub ? "on" : Notification.permission === "denied" ? "denied" : "off");
-    })().catch(() => setState("unsupported"));
-  }, []);
-  const enable = async () => {
-    if (!key.data?.public_key) return;
-    const perm = await Notification.requestPermission();
-    if (perm !== "granted") return setState("denied");
-    const reg = await navigator.serviceWorker.ready;
-    const sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64ToUint8(key.data.public_key) });
-    await api("/push/subscribe", { method: "POST", json: sub.toJSON() });
-    setState("on");
-  };
-  const disable = async () => {
-    const reg = await navigator.serviceWorker.getRegistration();
-    const sub = await reg?.pushManager.getSubscription();
-    if (sub) {
-      await api("/push/unsubscribe", { method: "POST", json: { endpoint: sub.endpoint } });
-      await sub.unsubscribe();
-    }
-    setState("off");
-  };
+function NotifyControl() {
+  const [perm, setPerm] = useState<string>("checking");
+  useEffect(() => setPerm(typeof Notification === "undefined" ? "unsupported" : Notification.permission), []);
   return (
-    <Panel title="Push notifications on this device">
-      {key.data && !key.data.public_key && <p className="text-sm text-warn">Server push is not configured (set VAPID keys; see docs/DEPLOY.md). Alerts still appear in the history below.</p>}
-      {state === "unsupported" && (
-        <p className="text-sm text-muted">This browser does not support Web Push here. On iPhone: iOS 16.4+, open in Safari, Share → Add to Home Screen, then open the installed app and enable here.</p>
+    <Panel title="Notifications on this device">
+      {perm === "unsupported" && (
+        <p className="text-sm text-muted">This browser has no notification support here. On iPhone (iOS 16.4+): Safari → Share → Add to Home Screen, then open the installed app. Alerts still list below.</p>
       )}
-      {state === "denied" && <p className="text-sm text-down">Notifications are blocked for this site. Re-enable them in system/browser settings.</p>}
-      <div className="flex flex-wrap items-center gap-2">
-        {state === "off" && key.data?.public_key && <button onClick={() => enable().catch((e) => alert(e.message))} className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-white">Enable notifications</button>}
-        {state === "on" && (
-          <>
-            <Badge tone="up">enabled</Badge>
-            <button onClick={() => api<{ delivered: number }>("/push/test", { method: "POST" }).then((r) => alert(`Sent to ${r.delivered} device(s)`))} className="rounded-lg border border-line px-3 py-1.5 text-sm">Send test</button>
-            <button onClick={disable} className="rounded-lg border border-line px-3 py-1.5 text-sm">Disable</button>
-          </>
-        )}
-      </div>
+      {perm === "denied" && <p className="text-sm text-down">Notifications are blocked for this site. Re-enable them in system or browser settings.</p>}
+      {perm === "default" && (
+        <button onClick={() => Notification.requestPermission().then(setPerm)} className="rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-white">
+          Allow notifications
+        </button>
+      )}
+      {perm === "granted" && <Badge tone="up">allowed</Badge>}
+      <Note>
+        Alerts are evaluated on the server once a minute for this open connection only and shown here and as a local notification. No push subscription, account or rule is stored, so
+        nothing fires after you close or refresh the page.
+      </Note>
     </Panel>
   );
 }
 
-function RuleForm({ kinds, onSaved }: { kinds: AlertKinds; onSaved: () => void }) {
+function RuleForm({ kinds, rules }: { kinds: AlertKinds; rules: AlertRule[] }) {
+  const wl = useWatchlist();
   const [kind, setKind] = useState("score_above");
   const [p, setP] = useState<Record<string, string>>({ score: "bottom", threshold: "85" });
   const [name, setName] = useState("");
   const [cooldown, setCooldown] = useState(1440);
-  const [err, setErr] = useState<Error | null>(null);
   const set = (k: string, v: string) => setP({ ...p, [k]: v });
   const field = "rounded-lg border border-line bg-panel px-2 py-1.5 text-sm";
   const defaults: Record<string, Record<string, string>> = {
@@ -85,17 +54,13 @@ function RuleForm({ kinds, onSaved }: { kinds: AlertKinds; onSaved: () => void }
     regime_change: { symbol: "" },
     watchlist_setup: { direction: "any" },
   };
-  const submit = async (e: React.FormEvent) => {
+  const submit = (e: React.FormEvent) => {
     e.preventDefault();
-    setErr(null);
-    try {
-      const params: Record<string, unknown> = Object.fromEntries(Object.entries(p).filter(([, v]) => v !== "").map(([k, v]) => [k, isNaN(Number(v)) ? v : Number(v)]));
-      await api("/alerts", { method: "POST", json: { name: name || kinds.kinds[kind], kind, params, cooldown_minutes: cooldown } });
-      setName("");
-      onSaved();
-    } catch (e) {
-      setErr(e as Error);
-    }
+    const params: Record<string, unknown> = Object.fromEntries(Object.entries(p).filter(([, v]) => v !== "").map(([k, v]) => [k, isNaN(Number(v)) ? v : Number(v)]));
+    if (kind === "watchlist_setup") params.symbols = wl;
+    const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    live.setAlertRules([...rules, { id, name: name || kinds.kinds[kind], kind, params, cooldown_minutes: cooldown }]);
+    setName("");
   };
   return (
     <form onSubmit={submit} className="space-y-3">
@@ -130,55 +95,54 @@ function RuleForm({ kinds, onSaved }: { kinds: AlertKinds; onSaved: () => void }
             {kind === "watchlist_setup" && <option value="any">any</option>}<option value="bullish">bullish</option><option value="bearish">bearish</option>
           </select>
         )}
+        {kind === "watchlist_setup" && <span className="text-xs text-muted">{wl.length ? `watching ${wl.join(", ")}` : "add symbols with ☆ on Analyze first"}</span>}
         {kind !== "watchlist_setup" && <input aria-label="Symbol" placeholder="Symbol (default SPY)" value={p.symbol ?? ""} onChange={(e) => set("symbol", e.target.value.toUpperCase())} className={field + " w-40"} />}
         <select aria-label="Frequency" value={cooldown} onChange={(e) => setCooldown(+e.target.value)} className={field}>
           {COOLDOWNS.map((c) => <option key={c.v} value={c.v}>{c.l}</option>)}
         </select>
-        <button className="rounded-lg bg-accent px-3 py-1.5 font-medium text-white">Add alert</button>
+        <button disabled={kind === "watchlist_setup" && !wl.length} className="rounded-lg bg-accent px-3 py-1.5 font-medium text-white disabled:opacity-50">Add alert</button>
       </div>
-      {err && <ErrorBox error={err} />}
     </form>
   );
 }
 
 export default function AlertsPage() {
   const kinds = useApi<AlertKinds>("/alerts/kinds");
-  const rules = useApi<AlertRule[]>("/alerts");
-  const events = useApi<AlertEvent[]>("/alerts/events");
-  const update = async (r: AlertRule, patch: Partial<AlertRule>) => {
-    await api(`/alerts/${r.id}`, { method: "PUT", json: { name: r.name, kind: r.kind, params: r.params, cooldown_minutes: r.cooldown_minutes, enabled: r.enabled, ...patch } });
-    rules.reload();
-  };
+  const { rules, events, error, connected } = useAlerts();
   return (
     <div className="space-y-4">
-      <h1 className="text-lg font-semibold">Alerts</h1>
-      <PushControl />
-      <Panel title="New alert">{kinds.data ? <RuleForm kinds={kinds.data} onSaved={rules.reload} /> : <Spinner />}
-        <Note>Alerts fire on the transition into a condition and must re-arm (move back past the threshold) before firing again; frequency caps repeats further. Evaluated after each end-of-day update.</Note>
+      <h1 className="text-lg font-semibold">Alerts (this session)</h1>
+      <NotifyControl />
+      <Panel title="New alert">
+        {kinds.error && <ErrorBox error={kinds.error} onRetry={kinds.reload} />}
+        {kinds.data ? <RuleForm kinds={kinds.data} rules={rules} /> : !kinds.error && <Spinner />}
+        <Note>
+          Alerts fire on the transition into a condition and must re-arm (move back past the threshold) before firing again; the frequency setting caps repeats and each session is limited
+          to 20 alerts a day. Score alerts use the provisional intraday value during market hours and the confirmed close otherwise; the alert text says which.
+        </Note>
       </Panel>
-      <Panel title="Your alerts" right={<button onClick={() => api("/alerts/evaluate", { method: "POST" }).then(() => { rules.reload(); events.reload(); })}>Evaluate now</button>}>
-        {rules.error && <ErrorBox error={rules.error} />}
-        {rules.data?.length === 0 && <p className="text-sm text-muted">No alerts yet.</p>}
+      <Panel title="Active rules" right={!connected && <Badge tone="warn">reconnecting: rules resume when the connection returns</Badge>}>
+        {error && <ErrorBox error={new Error(`Rules rejected: ${error}`)} />}
+        {rules.length === 0 && <p className="text-sm text-muted">No alerts yet.</p>}
         <ul className="divide-y divide-line">
-          {rules.data?.map((r) => (
+          {rules.map((r) => (
             <li key={r.id} className="flex flex-wrap items-center gap-2 py-2 text-sm">
               <span className="flex-1 font-medium">{r.name}</span>
               <span className="text-xs text-muted">{JSON.stringify(r.params)}</span>
-              {!r.armed && <Badge tone="warn" title="Fired; waits to re-arm">waiting to re-arm</Badge>}
-              {r.last_fired_at && <span className="text-xs text-muted">last {new Date(r.last_fired_at).toLocaleString()}</span>}
-              <button onClick={() => update(r, { enabled: !r.enabled })} className="rounded border border-line px-2 py-0.5 text-xs">{r.enabled ? "Pause" : "Resume"}</button>
-              <button onClick={() => api(`/alerts/${r.id}`, { method: "DELETE" }).then(rules.reload)} className="rounded border border-down/40 px-2 py-0.5 text-xs text-down">Delete</button>
+              <button onClick={() => live.setAlertRules(rules.filter((x) => x.id !== r.id))} className="rounded border border-down/40 px-2 py-0.5 text-xs text-down">
+                Remove
+              </button>
             </li>
           ))}
         </ul>
       </Panel>
-      <Panel title="Recent alerts">
-        {events.data?.length === 0 && <p className="text-sm text-muted">Nothing fired yet.</p>}
+      <Panel title="Fired this session">
+        {events.length === 0 && <p className="text-sm text-muted">Nothing fired yet.</p>}
         <ul className="space-y-2">
-          {events.data?.map((e) => (
-            <li key={e.id} className="rounded-lg bg-panel2 p-2 text-sm">
+          {events.map((e, i) => (
+            <li key={e.rule_id + e.fired_at + i} className="rounded-lg bg-panel2 p-2 text-sm">
               <div className="flex justify-between gap-2"><b>{e.title}</b><span className="text-xs text-muted">{new Date(e.fired_at).toLocaleString()}</span></div>
-              <div className="text-xs text-muted">{e.body} {e.delivered ? `· pushed to ${e.delivered}` : ""}</div>
+              <div className="text-xs text-muted">{e.body}</div>
             </li>
           ))}
         </ul>

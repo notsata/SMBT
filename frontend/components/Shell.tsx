@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useRef, useState } from "react";
-import { onOfflineData } from "@/lib/api";
+import { useConnection } from "@/lib/live";
 
 const NAV = [
   { href: "/", label: "Dashboard", key: "d", icon: "M3 12l9-8 9 8M5 10v10h5v-6h4v6h5V10" },
@@ -14,7 +14,7 @@ const NAV = [
   { href: "/history/", label: "History", key: "h", icon: "M12 8v4l3 2m6-2a9 9 0 11-3-6.7L21 3v5h-5" },
   { href: "/charts/", label: "Charts", key: "c", icon: "M3 17l5-5 4 4 8-9" },
   { href: "/analyst/", label: "AI Analyst", key: "i", icon: "M8 10h8M8 14h5m-9 6l2-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-7l-4 4" },
-  { href: "/settings/", label: "Settings & Data", key: "t", icon: "M12 15a3 3 0 100-6 3 3 0 000 6zm7.4-3a7.4 7.4 0 00-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 00-2-1.2L14.5 3h-5l-.4 2.6a7 7 0 00-2 1.2l-2.4-1-2 3.4 2 1.6a7.4 7.4 0 000 2.4l-2 1.6 2 3.4 2.4-1a7 7 0 002 1.2l.4 2.6h5l.4-2.6a7 7 0 002-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z" },
+  { href: "/settings/", label: "Data sources", key: "t", icon: "M12 15a3 3 0 100-6 3 3 0 000 6zm7.4-3a7.4 7.4 0 00-.1-1.2l2-1.6-2-3.4-2.4 1a7 7 0 00-2-1.2L14.5 3h-5l-.4 2.6a7 7 0 00-2 1.2l-2.4-1-2 3.4 2 1.6a7.4 7.4 0 000 2.4l-2 1.6 2 3.4 2.4-1a7 7 0 002 1.2l.4 2.6h5l.4-2.6a7 7 0 002-1.2l2.4 1 2-3.4-2-1.6c.1-.4.1-.8.1-1.2z" },
 ];
 const MOBILE = ["/", "/scanner/", "/analyze/", "/alerts/"];
 
@@ -30,16 +30,12 @@ function isActive(path: string, href: string) {
   return href === "/" ? path === "/" : path.startsWith(href.replace(/\/$/, ""));
 }
 
+/** Session-only theme switch (nothing is stored; a reload follows the system setting again). */
 export function applyTheme(t: string) {
   const dark = t === "dark" || (t === "system" && matchMedia("(prefers-color-scheme: dark)").matches);
   document.documentElement.classList.toggle("dark", dark);
   if (t === "system") document.documentElement.removeAttribute("data-theme");
   else document.documentElement.setAttribute("data-theme", t);
-  try {
-    localStorage.setItem("smbt-theme", t);
-  } catch {
-    /* storage unavailable (private mode) */
-  }
   window.dispatchEvent(new Event("smbt-theme"));
 }
 
@@ -48,8 +44,8 @@ export function Shell({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [more, setMore] = useState(false);
   const [help, setHelp] = useState(false);
-  const [cachedAt, setCachedAt] = useState<string | null>(null);
   const [online, setOnline] = useState(true);
+  const conn = useConnection().split("|");
   const search = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -61,11 +57,9 @@ export function Shell({ children }: { children: ReactNode }) {
     const off = () => setOnline(false);
     window.addEventListener("online", on);
     window.addEventListener("offline", off);
-    const unsub = onOfflineData(setCachedAt);
     return () => {
       window.removeEventListener("online", on);
       window.removeEventListener("offline", off);
-      unsub();
     };
   }, []);
 
@@ -143,12 +137,11 @@ export function Shell({ children }: { children: ReactNode }) {
               />
             </form>
             {!online && <span className="rounded bg-warn/15 px-2 py-0.5 text-[11px] text-warn">Offline</span>}
+            <span title={`Live connection: ${conn[0]}`} className={`flex items-center gap-1 text-[11px] ${conn[0] === "open" ? "text-muted" : "text-warn"}`}>
+              <span className={`h-2 w-2 rounded-full ${conn[0] === "open" ? "bg-up" : conn[0] === "connecting" ? "bg-warn" : "bg-down"}`} aria-hidden />
+              <span className="hidden sm:inline">{conn[0] === "open" ? (conn[1] || "connected") : conn[0] === "connecting" ? "connecting" : "reconnecting"}</span>
+            </span>
           </div>
-          {cachedAt && (
-            <div className="bg-warn/15 px-4 py-1 text-[11px] text-warn" role="status">
-              Showing cached data saved {new Date(cachedAt).toLocaleString()} — network unavailable.
-            </div>
-          )}
         </header>
         <main className="pb-safe mx-auto max-w-[1600px] px-3 py-4 sm:px-4">{children}</main>
       </div>

@@ -1,12 +1,13 @@
-from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app.config import ROOT, get_settings
+
 
 @pytest.fixture(scope="module")
-def client(db):
+def client():
     from app.main import app
 
     with TestClient(app) as c:
@@ -14,10 +15,10 @@ def client(db):
 
 
 ENDPOINTS = [
-    "/api/health", "/api/status", "/api/symbols", "/api/overview", "/api/overview?symbol=^IXIC", "/api/chart/^GSPC",
-    "/api/indicators/^GSPC?names=rsi14,vix,bottom,credit_spread", "/api/signals/^GSPC", "/api/analyze/^IXIC",
-    "/api/scanner", "/api/scanner?timeframe=weekly&direction=bearish", "/api/analogs?symbol=^GSPC", "/api/strategies",
-    "/api/signal-stats/^GSPC?signal=rsi_oversold", "/api/scoreboard/^GSPC", "/api/alerts/kinds", "/api/watchlist", "/api/settings",
+    "/api/health", "/api/status", "/api/symbols", "/api/overview?symbol=^GSPC", "/api/overview?symbol=^IXIC", "/api/chart/^GSPC",
+    "/api/indicators/^GSPC?names=rsi14,vix,bottom,macro_risk", "/api/signals/^GSPC", "/api/analyze/^IXIC", "/api/scanner",
+    "/api/scanner?timeframe=weekly&direction=bearish", "/api/analogs?symbol=^GSPC", "/api/strategies", "/api/signal-stats/^GSPC?signal=rsi_oversold",
+    "/api/scoreboard/^GSPC", "/api/alerts/kinds", "/api/quote/^GSPC", "/api/search?q=apple",
 ]
 
 
@@ -25,132 +26,140 @@ ENDPOINTS = [
 def test_endpoints_ok(client, path):
     r = client.get(path)
     assert r.status_code == 200, r.text
+    assert r.headers["cache-control"] == "no-store"
 
 
-def test_overview_contract(client):
+def test_overview_cards_carry_provenance_and_status(client):
     ov = client.get("/api/overview?symbol=^GSPC").json()
-    cards = ov["cards"]
-    assert set(cards) == {"regime", "bottom", "top", "trend", "vix", "breadth", "sentiment", "macro"}
-    for c in cards.values():
-        assert {"value", "as_of", "source", "available"} <= c.keys()
-    # breadth needs constituent data the sample lacks: it must say unavailable, not show a number
-    assert cards["breadth"]["value"] is None and cards["breadth"]["available"] is False and cards["breadth"]["note"]
-    assert cards["bottom"]["kind"] == "heuristic" and ov["probabilities"]["kind"] == "empirical"
-    assert "End-of-day" in ov["data_kind"]
-    assert 0 <= cards["bottom"]["value"] <= 100
+    assert set(ov["cards"]) == {"regime", "bottom", "top", "trend", "vix", "breadth", "sentiment", "macro"}
+    for name, c in ov["cards"].items():
+        assert {"value", "status", "basis", "as_of", "provider", "method"} <= c.keys(), name
+        assert c["status"] in {"LIVE", "DELAYED", "STALE", "CLOSED", "UNAVAILABLE"}
+    # fixture history ends 2018, so nothing may claim to be current
+    assert ov["cards"]["bottom"]["status"] == "STALE" and "has not published" in ov["cards"]["bottom"]["note"]
+    assert ov["cards"]["breadth"]["status"] == "UNAVAILABLE" and ov["cards"]["breadth"]["value"] is None
+    assert ov["quote"]["status"] == "UNAVAILABLE"  # no streaming provider configured: no price is shown as live
+    assert ov["probabilities"]["kind"] == "empirical" and ov["confirmed_as_of"] == "2018-12-31"
+    assert "fixture" in ov["meta"]["sources"]
 
 
-def test_unknown_symbol_404(client):
-    assert client.get("/api/analyze/ZZZZ").status_code == 404
+def test_unavailable_paths_are_truthful(client):
+    r = client.get("/api/intraday/^GSPC")
+    assert r.status_code == 503 and "streaming provider" in r.json()["detail"]
+    r = client.get("/api/options/SPY")
+    assert r.status_code == 503 and "Options" in r.json()["detail"]
+    r = client.get("/api/analyze/NOPE")
+    assert r.status_code == 503 and "no provider returned history" in r.json()["detail"]
+    a = client.get("/api/analyze/^IXIC").json()
+    assert a["fundamentals"]["unavailable"] and a["profile"] is None and a["live"] is None
 
 
-def test_backtest_and_errors(client):
+def test_public_mode_blocks_unlicensed_sources(client, monkeypatch):
+    st = get_settings()
+    monkeypatch.setattr(st, "access_mode", "public")
+    r = client.get("/api/overview?symbol=^GSPC")
+    assert r.status_code == 451 and "not licensed" in r.json()["detail"]
+    monkeypatch.setattr(st, "public_display_licenses", "fixture,cboe")
+    assert client.get("/api/overview?symbol=^GSPC").status_code == 200
+
+
+def test_backtest_and_validation(client):
     r = client.post("/api/backtest", json={"symbol": "^GSPC", "strategy": "rsi2"})
     assert r.status_code == 200
     j = r.json()
-    assert j["oos"]["n_days"] > 0 and j["purged_cv"]["folds"] and j["equity"]
+    assert j["oos"]["n_days"] > 1000 and j["purged_cv"]["folds"] and j["data"]["basis"] == "confirmed closes"
     assert client.post("/api/backtest", json={"strategy": "nope"}).status_code == 400
     assert client.get("/api/signal-stats/^GSPC?signal=nope").status_code == 400
 
 
-def test_alert_crud_validation(client):
-    assert client.post("/api/alerts", json={"name": "bad", "kind": "score_above", "params": {"score": "x", "threshold": 50}}).status_code == 400
-    r = client.post("/api/alerts", json={"name": "vix", "kind": "vix_range", "params": {"min": 10, "max": 40}})
-    assert r.status_code == 200
-    rid = r.json()["id"]
-    assert client.put(f"/api/alerts/{rid}", json={"name": "vix2", "kind": "vix_range", "params": {"min": 10, "max": 41}}).json()["params"]["max"] == 41
-    assert client.delete(f"/api/alerts/{rid}").status_code == 200
+def test_rate_limit(client, monkeypatch):
+    from app import main
+
+    monkeypatch.setattr(get_settings(), "rate_limit_per_min", 3)
+    main._hits.clear()
+    codes = [client.get("/api/symbols").status_code for _ in range(5)]
+    assert codes[:3] == [200, 200, 200] and codes[3] == 429
+    main._hits.clear()
 
 
-def test_settings_and_watchlist_roundtrip(client):
-    client.put("/api/settings", json={"default_symbol": "QQQ"})
-    assert client.get("/api/settings").json()["default_symbol"] == "QQQ"
-    assert "NVDA" in client.post("/api/watchlist/nvda").json()
-    assert "NVDA" not in client.delete("/api/watchlist/NVDA").json()
+def test_browser_websocket_protocol(client):
+    with client.websocket_connect("/ws") as w:
+        hello = w.receive_json()
+        assert hello["type"] == "hello" and hello["licensing"]["access_mode"] == "personal" and "session" in hello
+        w.send_json({"op": "subscribe", "symbols": ["^GSPC", "bad symbol!!"]})
+        batch = w.receive_json()
+        assert batch["type"] == "batch"
+        kinds = {(i["type"], i["symbol"]) for i in batch["items"]}
+        assert ("quote", "^GSPC") in kinds and ("bars", "^GSPC") in kinds
+        quote = next(i for i in batch["items"] if i["type"] == "quote")["data"]
+        assert quote["status"] == "UNAVAILABLE"
+        w.send_json({"op": "alerts", "rules": [{"kind": "score_above", "params": {"score": "bottom", "threshold": 50}}]})
+        ack = next(i for i in _items(w) if i["type"] == "alerts_ack")
+        assert ack["rules"][0]["params"]["threshold"] == 50
+        w.send_json({"op": "alerts", "rules": [{"kind": "score_above", "params": {"score": "x", "threshold": 50}}]})
+        assert any(i["type"] == "error" for i in _items(w))
 
 
-def test_import_series_csv(client):
-    r = client.post("/api/admin/import/AAII_SPREAD", content=b"date,value\n2018-01-04,20.5\n2018-01-11,15.0\n")
-    assert r.status_code == 200 and r.json()["rows"] == 2
-    assert client.post("/api/admin/import/NOT_A_SERIES", content=b"date,value\n").status_code == 400
+def _items(w):
+    for _ in range(20):
+        m = w.receive_json()
+        if m.get("type") == "batch" and m["items"]:
+            return m["items"]
+    return []
 
 
-def test_auth_enforced_when_token_set(client, monkeypatch):
-    from app.config import get_settings
+def test_session_alerts_hysteresis():
+    from app import services as S
+    from app.alerts import SessionAlerts, crossed
 
-    monkeypatch.setattr(get_settings(), "app_access_token", "s3cret-token")
-    monkeypatch.setattr(get_settings(), "cookie_secure", False)
-    client.cookies.clear()
-    assert client.get("/api/overview").status_code == 401
-    assert client.get("/api/health").status_code == 200
-    assert client.post("/api/auth/login", json={"token": "wrong"}).status_code == 401
-    assert client.get("/api/status", headers={"Authorization": "Bearer s3cret-token"}).status_code == 200
-    r = client.post("/api/auth/login", json={"token": "s3cret-token"})
-    assert r.status_code == 200 and "smbt_session" in r.cookies
-    assert client.get("/api/status").status_code == 200
-    client.post("/api/auth/logout")
-    client.cookies.clear()
-    assert client.get("/api/status").status_code == 401
+    cur = S.overview("^GSPC")["cards"]["bottom"]["value"]
+    sa = SessionAlerts()
+    sa.set_rules([{"kind": "score_above", "params": {"score": "bottom", "threshold": cur - 1, "symbol": "^GSPC"}, "cooldown_minutes": 1}])
+    first = sa.evaluate()
+    assert len(first) == 1 and "above" in first[0]["title"]
+    assert sa.evaluate() == []  # still above: not re-armed, no repeat
+    assert crossed(cur - 10, cur - 1, True, False, 5) == (False, True)  # re-arms after moving back by rearm
 
 
-def test_alert_hysteresis_and_cooldown(db):
-    from app import alerts as A
-    from app.db import AlertEvent, AlertRule, utcnow
+def test_nothing_is_persisted(client):
+    leftovers = [p for p in ROOT.rglob("*") if p.suffix in (".db", ".sqlite", ".sqlite3") and "node_modules" not in p.parts and ".venv" not in p.parts]
+    assert leftovers == []
+    import app
 
-    cur = A.S.overview(db, "^GSPC")["cards"]["bottom"]["value"]
-    rule = AlertRule(name="t", kind="score_above", params=A.validate("score_above", {"score": "bottom", "threshold": cur - 1, "symbol": "^GSPC"}),
-                     cooldown_minutes=60, armed=True, last_state={})
-    db.add(rule)
-    db.commit()
-    now = utcnow()
-    first = A.evaluate_all(db, now)
-    assert any(e.rule_id == rule.id for e in first)
-    again = A.evaluate_all(db, now + timedelta(hours=5))
-    assert not any(e.rule_id == rule.id for e in again)  # still above threshold: not re-armed, no repeat
-    assert A._crossed(cur, cur - 1, True, False, 5) == (False, False)
-    assert A._crossed(cur - 10, cur - 1, True, False, 5) == (False, True)  # re-arms after moving back by rearm
-    db.delete(rule)
-    db.commit()
+    assert not any(m.startswith("sqlalchemy") for m in __import__("sys").modules), "no database layer should be loaded"
+    assert app
 
 
 def test_analyst_disabled_without_key(client):
-    r = client.post("/api/analyst", json={"question": "How close is the market to a bottom?"})
-    assert r.status_code == 503
+    assert client.post("/api/analyst", json={"question": "How close is the market to a bottom?"}).status_code == 503
 
 
-def test_analyst_loop_grounded_in_tools(db, monkeypatch):
-    """Fake Claude client: requests a tool, then answers. Verifies tool results and citations flow through."""
+def test_analyst_loop_grounded_in_tools(monkeypatch):
+    """Fake Claude client: requests tools, then answers. Tool results and citations come from live-layer data."""
     from app import analyst
-    from app.config import get_settings
 
     monkeypatch.setattr(get_settings(), "anthropic_api_key", "test-key")
     seen = {}
 
     class FakeMessages:
-        def __init__(self):
-            self.n = 0
+        n = 0
 
         def create(self, **kw):
-            self.n += 1
-            seen.setdefault("calls", []).append(kw)
+            FakeMessages.n += 1
             assert kw["fallbacks"] == "default" and kw["tools"]
-            if self.n == 1:
+            if FakeMessages.n == 1:
                 return SimpleNamespace(stop_reason="tool_use", model="m", content=[
                     SimpleNamespace(type="tool_use", id="t1", name="get_market_overview", input={"symbol": "^GSPC"}),
                     SimpleNamespace(type="tool_use", id="t2", name="get_signal_statistics", input={"symbol": "^GSPC", "signal": "nope"}),
                 ])
-            results = kw["messages"][-1]["content"]
-            seen["results"] = results
-            return SimpleNamespace(stop_reason="end_turn", model="m", content=[SimpleNamespace(type="text", text="Grounded answer [overview ^GSPC]")])
+            seen["results"] = kw["messages"][-1]["content"]
+            return SimpleNamespace(stop_reason="end_turn", model="m", content=[SimpleNamespace(type="text", text="Grounded answer")])
 
-    fake = SimpleNamespace(beta=SimpleNamespace(messages=FakeMessages()))
-    monkeypatch.setattr(analyst.anthropic, "Anthropic", lambda **kw: fake)
-    out = analyst.ask(db, "How close is the S&P to a bottom?")
-    assert out["answer"].startswith("Grounded answer")
-    assert out["citations"][0]["symbol"] == "^GSPC" and out["citations"][0]["as_of"] == "2018-12-31"
+    monkeypatch.setattr(analyst.anthropic, "Anthropic", lambda **kw: SimpleNamespace(beta=SimpleNamespace(messages=FakeMessages())))
+    out = analyst.ask("How close is the S&P to a bottom?")
+    assert out["answer"] == "Grounded answer" and out["citations"][0]["as_of"] == "2018-12-31"
     res = seen["results"]
-    assert len(res) == 2 and res[1]["is_error"] is True  # bad tool input reported to the model, not swallowed
-    assert '"scores"' in res[0]["content"]
+    assert len(res) == 2 and res[1]["is_error"] is True and '"status"' in res[0]["content"]
 
 
 @pytest.mark.parametrize("tool,args", [
@@ -158,8 +167,8 @@ def test_analyst_loop_grounded_in_tools(db, monkeypatch):
     ("get_correction_frequency", {"symbol": "^GSPC", "threshold_pct": 10, "horizon_days": 126}),
     ("get_historical_analogs", {"symbol": "^GSPC"}), ("run_scanner", {"direction": "bullish"}), ("get_data_status", {}),
 ])
-def test_analyst_tools(db, tool, args):
+def test_analyst_tools(client, tool, args):
     from app.analyst import run_tool
 
-    data, cites = run_tool(db, tool, args)
+    data, cites = run_tool(tool, args)
     assert data and cites

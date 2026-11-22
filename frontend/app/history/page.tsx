@@ -2,12 +2,12 @@
 
 import { useState } from "react";
 import { DistBar, ErrorBox, KindTag, Note, Panel, Spinner, Td, Th } from "@/components/ui";
-import type { Analogs, SymbolInfo } from "@/lib/api";
+import type { Analogs, Symbols } from "@/lib/api";
 import { HORIZONS, pct, signedClass } from "@/lib/format";
 import { useApi } from "@/lib/useApi";
 
 export default function HistoryPage() {
-  const syms = useApi<{ symbols: SymbolInfo[]; default: string | null }>("/symbols");
+  const syms = useApi<Symbols>("/symbols");
   const [symbol, setSymbol] = useState<string | null>(null);
   const sym = symbol ?? syms.data?.default ?? null;
   const { data, error, reload } = useApi<Analogs>(sym ? `/analogs?symbol=${encodeURIComponent(sym)}&k=12` : null);
@@ -17,7 +17,7 @@ export default function HistoryPage() {
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="mr-2 text-lg font-semibold">Historical comparison</h1>
         <select aria-label="Symbol" value={sym ?? ""} onChange={(e) => setSymbol(e.target.value)} className="rounded-lg border border-line bg-panel px-2 py-1 text-xs">
-          {syms.data?.symbols.filter((s) => s.kind !== "stock").map((s) => <option key={s.symbol}>{s.symbol}</option>)}
+          {syms.data && [...new Set([...syms.data.benchmarks, ...syms.data.universe])].map((s) => <option key={s}>{s}</option>)}
         </select>
         <KindTag kind="similarity" />
       </div>

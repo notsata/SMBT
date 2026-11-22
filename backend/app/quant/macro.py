@@ -1,4 +1,4 @@
-"""Sentiment and macro feature frames from point-in-time aligned inputs (see data.store.pit_series)."""
+"""Sentiment and macro feature frames from point-in-time aligned inputs (see market.macro.MacroStore.pit)."""
 
 from collections.abc import Callable
 
@@ -19,7 +19,8 @@ def sahm(s: pd.Series) -> pd.Series:
     return ma3 - ma3.shift(1).rolling(12, min_periods=12).min()
 
 
-def sentiment_frame(index: pd.DatetimeIndex, vix: pd.Series | None, vix3m: pd.Series | None, pit: PitFn) -> pd.DataFrame:
+def sentiment_frame(index: pd.DatetimeIndex, vix: pd.Series | None, vix3m: pd.Series | None) -> pd.DataFrame:
+    """Volatility-based sentiment. Survey/positioning series (AAII, NAAIM, Cboe put/call) have no API source."""
     out = pd.DataFrame(index=index)
     if vix is not None:
         v = vix.reindex(index)
@@ -27,11 +28,6 @@ def sentiment_frame(index: pd.DatetimeIndex, vix: pd.Series | None, vix3m: pd.Se
         out["vix_vs50"] = v / v.rolling(50, min_periods=40).mean()
     if vix is not None and vix3m is not None:
         out["vix_term"] = vix.reindex(index) / vix3m.reindex(index)  # > 1 = backwardation (stress)
-    pcr = pit("PCR_EQUITY")
-    out["pcr10"] = pcr.rolling(10, min_periods=8).mean()
-    out["aaii_spread"] = pit("AAII_SPREAD")
-    out["naaim"] = pit("NAAIM")
-    out["short_interest"] = pit("SHORT_INTEREST")
     return out
 
 
@@ -49,8 +45,6 @@ def macro_frame(index: pd.DatetimeIndex, pit: PitFn) -> pd.DataFrame:
     out["real_10y"] = pit("DFII10")
     out["real_chg126"] = out["real_10y"] - out["real_10y"].shift(126)
     credit = pit("BAA10Y")
-    if credit.isna().all():  # long-history monthly fallback (Moody's Baa - Aaa)
-        credit = pit("BAA") - pit("AAA")
     out["credit_spread"] = credit
     out["credit_chg20"] = credit - credit.shift(20)
     out["credit_chg63"] = credit - credit.shift(63)
@@ -61,13 +55,16 @@ def macro_frame(index: pd.DatetimeIndex, pit: PitFn) -> pd.DataFrame:
     out["cpi_yoy"] = pit("CPIAUCSL", transform=yoy)
     out["core_cpi_yoy"] = pit("CPILFESL", transform=yoy)
     out["philly_mfg"] = pit("GACDFSA066MSFRBPHI")
-    # FRED units: WALCL and WTREGEN in $ millions, RRPONTSYD in $ billions -> net liquidity in $ billions.
-    nl = pit("WALCL") / 1000 - pit("WTREGEN") / 1000 - pit("RRPONTSYD").fillna(0)
+        # FRED units: WALCL and WTREGEN in $ millions, RRPONTSYD in $ billions -> $ billions. Reverse repo counts as 0
+    # only before the facility's first observation (it did not exist); a missing current value leaves this NaN.
+    rrp = pit("RRPONTSYD")
+    first = rrp.first_valid_index()
+    rrp = rrp.where(rrp.index >= first, 0.0) if first is not None else rrp
+    nl = pit("WALCL") / 1000 - pit("WTREGEN") / 1000 - rrp
     out["net_liquidity"] = nl.where(nl > 0)
     out["net_liq_chg63"] = out["net_liquidity"].pct_change(63, fill_method=None)
     out["m2_yoy"] = pit("M2SL", transform=yoy)
     out["mcap_gdp"] = pit("NCBEILQ027S") / 1000 / pit("GDP") * 100
-    out["cape"] = pit("CAPE")
     out["rf_rate"] = pit("DTB3")
     return out
 
@@ -87,7 +84,6 @@ def fear_greed(f: pd.DataFrame) -> pd.DataFrame:
         add("momentum (vs 125d avg)", "_mom")
     add("strength (new highs - lows)", "nhnl_pct")
     add("breadth (McClellan summation)", "mcclellan_sum")
-    add("put/call (10d)", "pcr10", invert=True)
     add("volatility (VIX vs 50d)", "vix_vs50", invert=True)
     add("safe haven (stocks - bonds 20d)", "stock_bond_20")
     add("junk bond demand (credit spread)", "credit_spread", invert=True)

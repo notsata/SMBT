@@ -96,6 +96,17 @@ export default function ScannerPage() {
             </div>
             <Note>{data.note} Evidence column = sum of mean excess returns (in %) of active setups whose pooled history pointed the right way with ≥30 onsets.</Note>
           </Panel>
+          <Panel title="Scan inputs">
+            <ul className="space-y-1 text-xs">
+              <li>Confirmed daily closes through <b className="num">{data.as_of}</b> from {data.providers.join(", ") || "—"}; company profiles from {data.profiles ?? "none (no FMP_API_KEY: sector and size filters empty)"}.</li>
+              {data.skipped.length > 0 && (
+                <li>
+                  <span className="text-warn">Skipped {data.skipped.length}</span> (no trustworthy history, not ranked):{" "}
+                  {data.skipped.map((s) => <span key={s.symbol} title={s.reason} className="mr-1.5 underline decoration-dotted">{s.symbol}</span>)}
+                </li>
+              )}
+            </ul>
+          </Panel>
         </>
       )}
     </div>

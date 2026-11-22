@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { LineChart } from "@/components/charts";
 import { Badge, DistBar, ErrorBox, Note, Panel, Spinner, Td, Th } from "@/components/ui";
-import { api, type Backtest, type Metrics, type ScoreRow, type SignalReport, type Strategy, type SymbolInfo } from "@/lib/api";
+import { api, type Backtest, type Metrics, type ScoreRow, type SignalReport, type Strategy, type Symbols } from "@/lib/api";
 import { HORIZONS, isNum, num, pct, signedClass } from "@/lib/format";
 import { useApi } from "@/lib/useApi";
 
@@ -105,7 +105,7 @@ function BacktestPanel({ symbol }: { symbol: string }) {
                 In-sample with defaults ({Object.entries(res.in_sample_defaults.params).map(([k, v]) => `${k}=${v}`).join(", ") || "—"}): CAGR {pct(res.in_sample_defaults.metrics.cagr, 1)}, Sharpe {num(res.in_sample_defaults.metrics.sharpe, 2)}. {res.in_sample_defaults.warning}
               </div>
               <div className="text-muted">
-                Assumptions: execution at {res.assumptions.execution}, {res.assumptions.commission_bps}+{res.assumptions.slippage_bps} bps per side, cash yield {res.assumptions.cash_yield}, objective {res.assumptions.objective}. {res.data.survivorship}
+                Assumptions: execution at {res.assumptions.execution}, {res.assumptions.commission_bps}+{res.assumptions.slippage_bps} bps per side, cash yield {res.assumptions.cash_yield}, objective {res.assumptions.objective}. {res.data.survivorship} Data: {res.data.provider} ({res.data.adjustment}) {res.data.first} → {res.data.last}, {res.data.basis}.
               </div>
             </div>
           </div>
@@ -226,7 +226,7 @@ function SignalPanel({ symbol }: { symbol: string }) {
 }
 
 export default function ValidatePage() {
-  const syms = useApi<{ symbols: SymbolInfo[]; default: string | null }>("/symbols");
+  const syms = useApi<Symbols>("/symbols");
   const [symbol, setSymbol] = useState<string | null>(null);
   const sym = symbol ?? syms.data?.default ?? null;
   return (
@@ -234,7 +234,7 @@ export default function ValidatePage() {
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="mr-2 text-lg font-semibold">Validation &amp; backtesting</h1>
         <select aria-label="Symbol" value={sym ?? ""} onChange={(e) => setSymbol(e.target.value)} className="rounded-lg border border-line bg-panel px-2 py-1 text-xs">
-          {syms.data?.symbols.map((s) => <option key={s.symbol}>{s.symbol}</option>)}
+          {syms.data && [...new Set([...syms.data.benchmarks, ...syms.data.universe])].map((s) => <option key={s}>{s}</option>)}
         </select>
         <span className="text-xs text-muted">Every number here is measured on stored history; nothing is simulated or assumed.</span>
       </div>

@@ -1,7 +1,7 @@
 "use client";
 
 import { type ReactNode, useState } from "react";
-import { daysAgo, isNum, pct } from "@/lib/format";
+import { isNum, pct } from "@/lib/format";
 
 type Tone = "up" | "down" | "warn" | "muted" | "accent";
 const toneText: Record<Tone, string> = { up: "text-up", down: "text-down", warn: "text-warn", muted: "text-muted", accent: "text-accent" };
@@ -57,17 +57,58 @@ export function ErrorBox({ error, onRetry }: { error: Error; onRetry?: () => voi
   );
 }
 
-export function Freshness({ asOf, source, stale }: { asOf?: string | null; source?: string; stale?: boolean | null }) {
-  const d = daysAgo(asOf);
+const STATUS_STYLE: Record<string, { tone: Tone; tip: string }> = {
+  LIVE: { tone: "up", tip: "Confirmed real-time feed; updates as events arrive." },
+  DELAYED: { tone: "accent", tip: "Known provider or publication delay (e.g. 15-minute feed, prior close, official release schedule)." },
+  STALE: { tone: "warn", tip: "Previously verified but no longer current." },
+  CLOSED: { tone: "muted", tip: "Market session inactive; last verified values." },
+  UNAVAILABLE: { tone: "down", tip: "No trustworthy value can be shown." },
+};
+
+export function StatusBadge({ status, reason }: { status?: string | null; reason?: string | null }) {
+  const s = STATUS_STYLE[status ?? "UNAVAILABLE"] ?? STATUS_STYLE.UNAVAILABLE;
+  return (
+    <Badge tone={s.tone} title={`${s.tip}${reason ? " · " + reason : ""}`}>
+      {status === "LIVE" && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-up" aria-hidden />}
+      {status ?? "UNAVAILABLE"}
+    </Badge>
+  );
+}
+
+function when(iso?: string | null) {
+  if (!iso) return "—";
+  if (iso.length === 10) return iso;
+  const d = new Date(iso);
+  return isNaN(d.getTime()) ? iso : d.toLocaleString();
+}
+
+/** Expandable provenance: source, authority, timestamps, session, delay, method. */
+export function Inspector({ rows }: { rows: [string, unknown][] }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="mt-1 text-[11px]">
+      <button onClick={(e) => { e.stopPropagation(); setOpen(!open); }} aria-expanded={open} className="text-muted underline decoration-dotted hover:text-fg">
+        {open ? "hide source" : "source & method"}
+      </button>
+      {open && (
+        <dl className="mt-1 grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 rounded-md bg-panel2 p-2 text-left">
+          {rows.filter(([, v]) => v !== undefined && v !== null && v !== "").map(([k, v]) => (
+            <div key={k} className="contents">
+              <dt className="text-muted">{k}</dt>
+              <dd className="min-w-0 [overflow-wrap:anywhere]">{typeof v === "string" && /^\d{4}-\d{2}-\d{2}T/.test(v) ? when(v) : String(v)}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </div>
+  );
+}
+
+export function StatusLine({ status, asOf, reason }: { status?: string | null; asOf?: string | null; reason?: string | null }) {
   return (
     <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] text-muted">
-      {asOf ? <span className="num">as of {asOf}</span> : <span>no data</span>}
-      {stale && <Badge tone="warn" title={`${d} days old`}>stale</Badge>}
-      {source && (
-        <span className="truncate" title={source}>
-          · {source}
-        </span>
-      )}
+      <StatusBadge status={status} reason={reason} />
+      {asOf && <span className="num">{when(asOf)}</span>}
     </div>
   );
 }

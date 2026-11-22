@@ -1,33 +1,48 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
-import { MARKER_TYPES, PriceChart } from "@/components/charts";
-import { Badge, ErrorBox, Freshness, Gauge, KindTag, Note, Panel, Spinner, Td, Th, toneText } from "@/components/ui";
-import type { Card, ChartData, Component, Overview, ProbRow, SignalEvent, SymbolInfo } from "@/lib/api";
+import { useMemo, useState } from "react";
+import { IntradayChart, MARKER_TYPES, PriceChart } from "@/components/charts";
+import { LiveQuote } from "@/components/LiveQuote";
+import { Badge, ErrorBox, Gauge, Inspector, KindTag, Note, Panel, Spinner, StatusBadge, StatusLine, Td, Th, toneText } from "@/components/ui";
+import type { Card, ChartData, Component, Intraday, LiveScores, Overview, ProbRow, SignalEvent, Symbols } from "@/lib/api";
 import { REGIME_TONE, isNum, num, pct, signedClass } from "@/lib/format";
+import { useLiveScores } from "@/lib/live";
 import { useApi } from "@/lib/useApi";
 
 const enc = encodeURIComponent;
-const PREFERRED = ["SPY", "QQQ", "IWM", "DIA", "^GSPC", "^IXIC", "SMH"];
+const PREFERRED = ["SPY", "QQQ", "IWM", "DIA", "SMH"];
+const LIVE_KEYS = { bottom: "bottom", top: "top", trend: "trend", regime: "regime" } as const;
 
-function useSymbol(def: string | null | undefined) {
-  const [s, setS] = useState<string | null>(null);
-  useEffect(() => {
-    try {
-      setS(localStorage.getItem("smbt-dash-symbol"));
-    } catch {
-      /* ignore */
-    }
-  }, []);
-  const set = (v: string) => {
-    setS(v);
-    try {
-      localStorage.setItem("smbt-dash-symbol", v);
-    } catch {
-      /* ignore */
-    }
+/** Overlay a pushed provisional score on a card; the confirmed value stays inspectable. */
+function withLive(id: string, card: Card, ls: LiveScores | null, display?: Record<string, string>): Card {
+  const key = LIVE_KEYS[id as keyof typeof LIVE_KEYS];
+  if (!key || !ls || ls[key] == null || (card.basis === "provisional" && card.as_of && card.as_of > ls.as_of)) return card;
+  const confirmed = card.basis === "confirmed" ? card.value : card.confirmed;
+  const confirmed_as_of = card.basis === "confirmed" ? card.as_of ?? undefined : card.confirmed_as_of;
+  return {
+    ...card,
+    value: ls[key],
+    status: ls.status,
+    basis: "provisional",
+    as_of: ls.as_of,
+    provider: ls.sources.join(","),
+    confirmed,
+    confirmed_as_of,
+    note: "Intraday value with today's live bar; validated statistics use closes.",
+    ...(id === "regime" && display ? { display: display[ls.regime ?? ""] ?? card.display } : {}),
   };
-  return [s ?? def ?? null, set] as const;
+}
+
+function cardRows(card: Card): [string, unknown][] {
+  return [
+    ["Basis", card.basis],
+    ["As of", card.as_of],
+    ["Provider", card.provider],
+    ["Method", card.method],
+    ["Confirmed value", card.basis === "provisional" ? (isNum(card.confirmed) ? num(card.confirmed, 1) : card.confirmed) : undefined],
+    ["Confirmed as of", card.basis === "provisional" ? card.confirmed_as_of : undefined],
+    ["Note", card.note],
+  ];
 }
 
 function Verdict({ ov }: { ov: Overview }) {
@@ -40,7 +55,7 @@ function Verdict({ ov }: { ov: Overview }) {
   const headline = tone === "up" ? "Conditions resemble historically attractive entry zones" : tone === "down" ? "Conditions resemble historically risky environments" : "No strong alignment between bottom and top evidence";
   const skill = (p?: ProbRow) => p?.oos?.brier_skill;
   return (
-    <Panel title="Bottom line" right={<span className="num">{ov.symbol} · {ov.as_of}</span>}>
+    <Panel title="Bottom line" right={<span className="num">{ov.symbol} · closes through {ov.confirmed_as_of}</span>}>
       <p className={`text-lg font-semibold ${tone === "up" ? "text-up" : tone === "down" ? "text-down" : ""}`}>{headline}</p>
       <ul className="mt-2 space-y-1 text-sm text-fg/90">
         <li>
@@ -65,7 +80,10 @@ function Verdict({ ov }: { ov: Overview }) {
           </li>
         )}
       </ul>
-      <Note>{ov.data_kind} Scores combine only indicators with data; coverage is shown on each card. See Validate for measured signal performance.</Note>
+      <Note>
+        Probabilities and episode counts use completed sessions only (through {ov.confirmed_as_of}); intraday card values are provisional. Scores combine only indicators with data;
+        coverage is shown on each card. See Validate for measured signal performance.
+      </Note>
     </Panel>
   );
 }
@@ -77,7 +95,8 @@ function ScoreCard({ id, card, active, onClick }: { id: string; card: Card; acti
   if (id === "regime" && card.value) main = <span className={toneText[REGIME_TONE[card.value as string] ?? "muted"]}>{card.display}</span>;
   else if (isNum(card.value)) main = <span className="num">{id === "breadth" ? `${num(card.value, 0)}%` : num(card.value, id === "vix" ? 2 : 0)}</span>;
   return (
-    <button onClick={onClick} aria-expanded={active} className={`rounded-xl border bg-panel p-3 text-left transition-colors ${active ? "border-accent" : "border-line hover:border-muted/50"}`}>
+    <div className={`rounded-xl border bg-panel p-3 transition-colors ${active ? "border-accent" : "border-line hover:border-muted/50"}`}>
+      <button onClick={onClick} aria-expanded={active} className="block w-full text-left">
       <div className="flex items-center justify-between gap-2">
         <span className="text-[11px] font-medium uppercase tracking-wide text-muted">{card.label}</span>
         {card.kind === "heuristic" && <span className="text-[10px] text-muted">heuristic</span>}
@@ -90,8 +109,11 @@ function ScoreCard({ id, card, active, onClick }: { id: string; card: Card; acti
         {(id === "bottom" || id === "top") && isNum(card.coverage) && <>coverage {pct(card.coverage, 0)}</>}
         {id === "breadth" && !card.available && <>needs constituent data</>}
       </div>
-      <Freshness asOf={card.as_of} stale={card.stale} />
-    </button>
+      </button>
+      <StatusLine status={card.status} asOf={card.as_of} reason={card.note} />
+      {card.basis === "provisional" && <div className="text-[10px] text-muted">provisional · intraday</div>}
+      <Inspector rows={cardRows(card)} />
+    </div>
   );
 }
 
@@ -162,7 +184,7 @@ function CardDetail({ id, ov }: { id: string; ov: Overview }) {
         <Note>{card.note}</Note>
       </div>
     );
-  return <Note>Source: {card.source}</Note>;
+  return <Note>{card.method}{card.provider && ` · ${card.provider}`}</Note>;
 }
 
 function Probabilities({ ov }: { ov: Overview }) {
@@ -248,28 +270,54 @@ const LEGEND: Record<string, string> = {
   regime_distribution: "D Distribution",
 };
 
+function IntradayPanel({ symbol }: { symbol: string }) {
+  const d = useApi<Intraday>(`/intraday/${enc(symbol)}`);
+  return (
+    <Panel title={`${symbol} today · 1-minute`} right={d.data && <StatusBadge status={d.data.status} reason={d.data.reason} />}>
+      {d.error && <ErrorBox error={d.error} onRetry={d.reload} />}
+      {d.data && (d.data.bars.length ? <IntradayChart symbol={symbol} initial={d.data.bars} height={260} /> : <Note>No intraday bars for this session yet.</Note>)}
+      {!d.data && !d.error && <Spinner label="Loading intraday bars" />}
+      {d.data && (
+        <Inspector
+          rows={[
+            ["Provider", d.data.provider],
+            ["Feed", d.data.feed],
+            ["Session date", d.data.session_date],
+            ["Method", "Minute bars built from streamed trades are provisional until the provider's official bar replaces them; New York time"],
+            ["Status reason", d.data.reason],
+          ]}
+        />
+      )}
+    </Panel>
+  );
+}
+
 export default function Dashboard() {
-  const syms = useApi<{ symbols: SymbolInfo[]; default: string | null }>("/symbols");
-  const [symbol, setSymbol] = useSymbol(syms.data?.default);
+  const syms = useApi<Symbols>("/symbols");
+  const [picked, setSymbol] = useState<string | null>(null); // tab memory only
+  const symbol = picked ?? syms.data?.default ?? null;
   const ov = useApi<Overview>(symbol ? `/overview?symbol=${enc(symbol)}` : null);
   const chart = useApi<ChartData>(symbol ? `/chart/${enc(symbol)}` : null);
   const sig = useApi<{ events: SignalEvent[] }>(symbol ? `/signals/${enc(symbol)}` : null);
+  const ls = useLiveScores(symbol);
+  const today = ov.data?.session.date;
+  const liveScores = ls && ls.session_date === today ? ls : null;
   const [open, setOpen] = useState<string | null>(null);
   const [sel, setSel] = useState<SignalEvent | null>(null);
   const [types, setTypes] = useState<string[]>(["bottom", "top", "zweig_thrust", "regime_bear_capitulation", "regime_distribution"]);
   const choices = useMemo(() => {
-    const all = syms.data?.symbols ?? [];
-    const pref = PREFERRED.filter((p) => all.some((s) => s.symbol === p));
-    return { pref, other: all.filter((s) => !pref.includes(s.symbol) && s.kind !== "stock").map((s) => s.symbol) };
+    const d = syms.data;
+    if (!d) return { pref: [], other: [] };
+    const pref = [...new Set([...d.benchmarks, ...PREFERRED.filter((p) => d.universe.includes(p))])];
+    return { pref, other: d.universe.filter((s) => !pref.includes(s)) };
   }, [syms.data]);
+  const cards = useMemo(() => {
+    if (!ov.data) return null;
+    const display = { [ov.data.cards.regime.value as string]: ov.data.cards.regime.display ?? "" };
+    return Object.fromEntries(Object.entries(ov.data.cards).map(([id, c]) => [id, withLive(id, c, liveScores, display)])) as Overview["cards"];
+  }, [ov.data, liveScores]);
 
   if (syms.error) return <ErrorBox error={syms.error} onRetry={syms.reload} />;
-  if (syms.data && !syms.data.default)
-    return (
-      <Panel title="No market data yet">
-        <p className="text-sm">The database is empty. Open Settings &amp; Data to run ingestion or load the bundled sample data.</p>
-      </Panel>
-    );
 
   return (
     <div className="space-y-4">
@@ -288,31 +336,29 @@ export default function Dashboard() {
             ))}
           </select>
         )}
-        {ov.data && (
-          <span className="ml-auto text-sm">
-            <span className="num font-semibold">{num(ov.data.price.close)}</span> <span className={`num ${signedClass(ov.data.price.change_1d)}`}>{pct(ov.data.price.change_1d, 2, true)}</span>
-            <span className="ml-2 text-xs text-muted">close {ov.data.as_of}</span>
-            {ov.data.price.quote && (
-              <span className="ml-2 text-xs text-muted" title={ov.data.price.quote.source}>
-                · last {num(ov.data.price.quote.price)} ({ov.data.price.quote.delay})
-              </span>
-            )}
+        {symbol && (
+          <span className="ml-auto">
+            <LiveQuote
+              symbol={symbol}
+              initial={ov.data?.quote}
+              close={ov.data && { value: ov.data.price.close, change: ov.data.price.change_1d, as_of: ov.data.confirmed_as_of, status: ov.data.session.session === "closed" ? "CLOSED" : "DELAYED", provider: ov.data.price.provider, note: "daily close from the history provider" }}
+            />
           </span>
         )}
       </div>
 
       {ov.error && <ErrorBox error={ov.error} onRetry={ov.reload} />}
       {!ov.data && !ov.error && <Spinner label="Computing market state" />}
-      {ov.data && (
+      {ov.data && cards && (
         <>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-8">
             {(["regime", "bottom", "top", "trend", "vix", "breadth", "sentiment", "macro"] as const).map((id) => (
-              <ScoreCard key={id} id={id} card={ov.data!.cards[id]} active={open === id} onClick={() => setOpen(open === id ? null : id)} />
+              <ScoreCard key={id} id={id} card={cards[id]} active={open === id} onClick={() => setOpen(open === id ? null : id)} />
             ))}
           </div>
           {open && (
-            <Panel title={ov.data.cards[open as keyof Overview["cards"]].label} right={<button onClick={() => setOpen(null)}>Close</button>}>
-              <CardDetail id={open} ov={ov.data} />
+            <Panel title={cards[open as keyof Overview["cards"]].label} right={<button onClick={() => setOpen(null)}>Close</button>}>
+              <CardDetail id={open} ov={{ ...ov.data, cards }} />
             </Panel>
           )}
           <Verdict ov={ov.data} />
@@ -322,7 +368,14 @@ export default function Dashboard() {
       <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]">
         <Panel
           title={`${symbol ?? ""} price with historical signals`}
-          right={chart.data && <span className="hidden sm:inline">{chart.data.source.split("(")[0]}</span>}
+          right={
+            chart.data && (
+              <span className="hidden items-center gap-1.5 sm:flex">
+                {chart.data.provider} · closes through {chart.data.last_confirmed}
+                {chart.data.provisional && <StatusBadge status={chart.data.provisional.status} reason={`today's candle is provisional (${chart.data.provisional.provider} ${chart.data.provisional.feed})`} />}
+              </span>
+            )
+          }
         >
           <div className="mb-2 flex flex-wrap gap-1.5">
             {MARKER_TYPES.map((t) => (
@@ -337,8 +390,11 @@ export default function Dashboard() {
             ))}
           </div>
           {chart.error && <ErrorBox error={chart.error} />}
-          {chart.data ? <PriceChart data={chart.data} events={sig.data?.events} visibleTypes={types} onSelect={setSel} /> : !chart.error && <Spinner label="Loading chart" />}
-          <Note>Tap a marker for the indicators that triggered it. Pinch or scroll to zoom. Signals use only data available on each date.</Note>
+          {chart.data ? <PriceChart data={chart.data} events={sig.data?.events} visibleTypes={types} onSelect={setSel} liveSymbol={symbol ?? undefined} /> : !chart.error && <Spinner label="Loading chart" />}
+          <Note>
+            Tap a marker for the indicators that triggered it. Pinch or scroll to zoom. Signals use only data available on each date. A tinted last candle is today&apos;s session in progress
+            (live feed), not a confirmed close.
+          </Note>
           {sel && <SignalDetail e={sel} onClose={() => setSel(null)} />}
         </Panel>
         {ov.data && (
@@ -350,11 +406,12 @@ export default function Dashboard() {
         )}
       </div>
 
+      {symbol && <IntradayPanel symbol={symbol} />}
       {ov.data && <Probabilities ov={ov.data} />}
       {ov.data && (
-        <Panel title="Not available (requires licensed data)">
+        <Panel title="Not shown (no licensed or trustworthy source)">
           <ul className="grid gap-1 text-xs text-muted sm:grid-cols-2">
-            {Object.entries(ov.data.unavailable).map(([k, v]) => (
+            {Object.entries(ov.data.limitations).map(([k, v]) => (
               <li key={k}>
                 <b className="text-fg/80">{k.replaceAll("_", " ")}</b>: {v}
               </li>

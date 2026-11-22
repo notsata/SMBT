@@ -13,7 +13,8 @@ import {
   type Time,
 } from "lightweight-charts";
 import { useEffect, useRef, useState } from "react";
-import type { ChartData, SignalEvent } from "@/lib/api";
+import type { ChartData, MinuteBar, Quote, SignalEvent } from "@/lib/api";
+import { live, useLiveBars } from "@/lib/live";
 
 export type Palette = { bg: string; fg: string; muted: string; line: string; up: string; down: string; accent: string; warn: string };
 
@@ -67,6 +68,7 @@ export function PriceChart({
   onSelect,
   overlays = ["sma50", "sma200"],
   height = 420,
+  liveSymbol,
 }: {
   data: ChartData;
   events?: SignalEvent[];
@@ -74,6 +76,7 @@ export function PriceChart({
   onSelect?: (e: SignalEvent | null) => void;
   overlays?: string[];
   height?: number;
+  liveSymbol?: string;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -90,8 +93,10 @@ export function PriceChart({
     const main = hasOhlc
       ? chart.addSeries(CandlestickSeries, { upColor: p.up, downColor: p.down, borderVisible: false, wickUpColor: p.up, wickDownColor: p.down })
       : chart.addSeries(LineSeries, { color: p.fg, lineWidth: 2 });
+    const provisionalDate = data.provisional ? data.bars[data.bars.length - 1]?.t : null;
+    const prov = { color: p.accent + "99", wickColor: p.accent, borderColor: p.accent };  // in-progress session, not a confirmed close
     if (hasOhlc) {
-      main.setData(data.bars.map((b) => ({ time: b.t as Time, open: b.o ?? b.c, high: b.h ?? b.c, low: b.l ?? b.c, close: b.c })) as never);
+      main.setData(data.bars.map((b) => ({ time: b.t as Time, open: b.o ?? b.c, high: b.h ?? b.c, low: b.l ?? b.c, close: b.c, ...(b.t === provisionalDate ? prov : {}) })) as never);
     } else {
       main.setData(data.bars.map((b) => ({ time: b.t as Time, value: b.c })) as never);
     }
@@ -125,11 +130,29 @@ export function PriceChart({
     });
     const n = data.bars.length;
     if (n > 400) chart.timeScale().setVisibleLogicalRange({ from: n - 400, to: n + 3 });
+    // Live: the current session's candle follows the quote stream (regular-session open/high/low and last price).
+    const lastT = data.bars[n - 1]?.t ?? "";
+    const unsubLive = liveSymbol ? live.subscribe(liveSymbol) : null;
+    const offLive = liveSymbol
+      ? live.on((m) => {
+          if (m.type !== "quote" || m.symbol !== liveSymbol) return;
+          const q = m.data as Quote;
+          if (!q.session_date || q.session_date < lastT || q.last == null || q.open == null || !["LIVE", "DELAYED"].includes(q.status)) return;
+          const bar = hasOhlc ? { time: q.session_date as Time, open: q.open, high: q.high ?? q.last, low: q.low ?? q.last, close: q.last, ...prov } : { time: q.session_date as Time, value: q.last };
+          try {
+            main.update(bar as never);
+          } catch {
+            /* out-of-order update: ignore */
+          }
+        })
+      : null;
     return () => {
+      offLive?.();
+      unsubLive?.();
       chart.remove();
       chartRef.current = null;
     };
-  }, [data, events, visibleTypes, p, overlays, height, expanded]);
+  }, [data, events, visibleTypes, p, overlays, height, expanded, liveSymbol]);
 
   useEffect(() => {
     if (!expanded) return;
@@ -179,5 +202,57 @@ export function LineChart({ t, lines, height = 260, priceFormat }: { t: string[]
     chart.timeScale().fitContent();
     return () => chart.remove();
   }, [t, lines, p, height, priceFormat]);
+  return <div ref={ref} style={{ height }} className="w-full touch-none" />;
+}
+
+/** Seconds to add to a UTC epoch so the chart's UTC axis reads New York wall-clock time. */
+function nyOffset(epochS: number): number {
+  const parts = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" })
+    .formatToParts(new Date(epochS * 1000))
+    .reduce<Record<string, string>>((a, x) => ((a[x.type] = x.value), a), {});
+  return Date.UTC(+parts.year, +parts.month - 1, +parts.day, +parts.hour, +parts.minute, +parts.second) / 1000 - epochS;
+}
+
+/** Today's 1-minute bars (New York time). Live bars from the stream update the series directly, no React re-render. */
+export function IntradayChart({ symbol, initial, height = 360 }: { symbol: string; initial: MinuteBar[]; height?: number }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const p = usePalette();
+  const api = useRef<{ candles: { update: (b: never) => void; setData: (b: never) => void }; vol: { update: (b: never) => void; setData: (b: never) => void }; off: number } | null>(null);
+  const toPoint = (b: MinuteBar, off: number) => ({ time: (b.t + off) as Time, open: b.open, high: b.high, low: b.low, close: b.close });
+
+  useEffect(() => {
+    if (!ref.current || !p) return;
+    const chart = createChart(ref.current, { ...baseOptions(p, height), timeScale: { borderColor: p.line, timeVisible: true, secondsVisible: false } });
+    const candles = chart.addSeries(CandlestickSeries, { upColor: p.up, downColor: p.down, borderVisible: false, wickUpColor: p.up, wickDownColor: p.down });
+    const vol = chart.addSeries(HistogramSeries, { priceScaleId: "vol", priceFormat: { type: "volume" }, color: p.muted + "55" });
+    chart.priceScale("vol").applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
+    const off = initial.length ? nyOffset(initial[0].t) : nyOffset(Math.floor(Date.now() / 1000));
+    candles.setData(initial.map((b) => toPoint(b, off)) as never);
+    vol.setData(initial.map((b) => ({ time: (b.t + off) as Time, value: b.volume, color: b.close < b.open ? p.down + "55" : p.up + "55" })) as never);
+    chart.timeScale().fitContent();
+    api.current = { candles: candles as never, vol: vol as never, off };
+    return () => {
+      api.current = null;
+      chart.remove();
+    };
+  }, [initial, p, height]);
+
+  useLiveBars(symbol, (bars, replace) => {
+    const a = api.current;
+    if (!a || !p) return;
+    if (replace && bars.length) {
+      a.candles.setData(bars.map((b) => toPoint(b, a.off)) as never);
+      a.vol.setData(bars.map((b) => ({ time: (b.t + a.off) as Time, value: b.volume, color: b.close < b.open ? p.down + "55" : p.up + "55" })) as never);
+      return;
+    }
+    for (const b of bars) {
+      try {
+        a.candles.update(toPoint(b, a.off) as never);
+        a.vol.update({ time: (b.t + a.off) as Time, value: b.volume, color: b.close < b.open ? p.down + "55" : p.up + "55" } as never);
+      } catch {
+        /* a bar older than the last drawn one (late official revision): skip redraw */
+      }
+    }
+  });
   return <div ref={ref} style={{ height }} className="w-full touch-none" />;
 }

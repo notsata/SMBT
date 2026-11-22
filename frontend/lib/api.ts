@@ -1,4 +1,4 @@
-// Typed client for the FastAPI backend. Same-origin /api in production; proxied in `next dev`.
+// Typed client for the backend. Same-origin /api in production; proxied in `next dev`. No auth, no storage.
 
 export class ApiError extends Error {
   constructor(public status: number, message: string) {
@@ -6,39 +6,16 @@ export class ApiError extends Error {
   }
 }
 
-type Listener = (cachedAt: string | null) => void;
-const offlineListeners = new Set<Listener>();
-export function onOfflineData(fn: Listener) {
-  offlineListeners.add(fn);
-  return () => {
-    offlineListeners.delete(fn);
-  };
-}
-
 export type ApiInit = RequestInit & { json?: unknown };
-type Transport = (path: string, init?: ApiInit) => Promise<unknown>;
-let transport: Transport | null = null;
-
-/** Replace HTTP with another data source (the offline snapshot build uses this). */
-export function setTransport(fn: Transport) {
-  transport = fn;
-}
 
 export async function api<T>(path: string, init?: ApiInit): Promise<T> {
-  if (transport) return transport(path, init) as Promise<T>;
   const { json, ...rest } = init ?? {};
   const res = await fetch(`/api${path}`, {
-    credentials: "same-origin",
+    cache: "no-store",
     ...rest,
     headers: { ...(json !== undefined ? { "Content-Type": "application/json" } : {}), ...(rest.headers ?? {}) },
     body: json !== undefined ? JSON.stringify(json) : rest.body,
   });
-  // The service worker marks responses it served from cache while offline.
-  const cached = res.headers.get("x-smbt-cached-at");
-  offlineListeners.forEach((fn) => fn(cached));
-  if (res.status === 401 && typeof window !== "undefined" && !location.pathname.startsWith("/login")) {
-    location.href = `/login/?next=${encodeURIComponent(location.pathname + location.search)}`;
-  }
   if (!res.ok) {
     let msg = res.statusText;
     try {
@@ -54,12 +31,17 @@ export async function api<T>(path: string, init?: ApiInit): Promise<T> {
 
 // ---------------------------------------------------------------- response types
 
+export type DataStatus = "LIVE" | "DELAYED" | "STALE" | "CLOSED" | "UNAVAILABLE";
+
 export type Card = {
   label: string;
   value: number | string | null;
+  status: DataStatus;
+  basis: string;
   as_of: string | null;
-  source: string;
-  stale: boolean | null;
+  provider: string | null;
+  method: string;
+  note?: string | null;
   available: boolean;
   display?: string;
   reasons?: string[];
@@ -68,16 +50,51 @@ export type Card = {
   direction?: string;
   percentile?: number | null;
   term_ratio?: number | null;
-  note?: string;
   pct_above_200?: number | null;
   mcclellan?: number | null;
   nhnl?: number | null;
   components?: Record<string, number | null>;
+  confirmed?: number | string | null;
+  confirmed_as_of?: string;
 };
+
+export type Quote = {
+  symbol: string;
+  status: DataStatus;
+  reason?: string;
+  session?: string;
+  provider?: string;
+  feed?: string;
+  authority?: string;
+  kind?: string;
+  delay_s?: number;
+  last?: number | null;
+  last_ts?: string | null;
+  recv_ts?: string | null;
+  bid?: number | null;
+  ask?: number | null;
+  bid_size?: number | null;
+  ask_size?: number | null;
+  quote_ts?: string | null;
+  open?: number | null;
+  high?: number | null;
+  low?: number | null;
+  volume?: number | null;
+  vwap?: number | null;
+  prev_close?: number | null;
+  change?: number | null;
+  change_pct?: number | null;
+  ext_last?: number | null;
+  ext_ts?: string | null;
+  session_date?: string | null;
+  stats?: { events: number; duplicates: number; out_of_order: number; late: number };
+  method?: string;
+};
+
+export type SessionInfo = { session: string; server_time: string; trading_day: boolean; date: string; open?: string; close?: string; early_close?: boolean; next_open: string };
 
 export type Component = { id: string; label: string; category: string; value: number | null; category_weight: number; detail: string; available: boolean };
 export type Explain = { date: string; score: number | null; coverage: number; regime: string; components: Component[]; kind: string };
-
 export type Dist = { n: number; mean?: number; median?: number; hit_rate?: number; pct?: Record<string, number>; episodes?: number; mean_ci95?: number[] | null };
 
 export type ProbRow = {
@@ -91,32 +108,41 @@ export type ProbRow = {
   days?: number;
   ci95?: number[] | null;
   sufficient?: boolean;
-  oos?: { n: number; brier_skill: number | null; brier_model?: number; brier_base_rate?: number; note?: string; calibration?: { pred: number[]; n: number; mean_pred: number; realized: number }[] };
-  return_stats?: Dist & { baseline?: Dist } | null;
+  oos?: { n: number; brier_skill: number | null; note?: string };
 };
 
 export type Overview = {
   symbol: string;
-  as_of: string;
-  data_kind: string;
-  price: { close: number | null; change_1d: number | null; source: string; quote?: { price: number; time: string; source: string; delay: string } | null };
+  session: SessionInfo;
+  quote: Quote | null;
+  confirmed_as_of: string;
+  provisional_as_of: string | null;
+  price: { close: number | null; change_1d: number | null; provider: string; authority: string; adjustment: string };
   cards: Record<"regime" | "bottom" | "top" | "trend" | "vix" | "breadth" | "sentiment" | "macro", Card>;
   explain: { bottom: Explain; top: Explain; trend: Record<string, number | null> };
   probabilities: { kind: string; method: string; as_of: string; bottom: ProbRow[]; top: ProbRow[] };
-  meta: { price: { source: string; last_date: string }; breadth: { available: boolean; note?: string; survivorship_bias?: boolean } };
-  unavailable: Record<string, string>;
+  meta: { sources: string[]; price: Record<string, unknown>; breadth: { available: boolean; note?: string } };
+  limitations: Record<string, string>;
+  licensing: { access_mode: string; licensed_for_public_display: string[] | string };
 };
 
+export type LiveScores = { symbol: string; as_of: string; session_date: string; rsi14?: number | null; status: DataStatus; bottom: number | null; top: number | null; trend: number | null; regime: string | null; price: number | null; sources: string[] };
+
 export type Bar = { t: string; o: number | null; h: number | null; l: number | null; c: number; v: number | null };
+export type MinuteBar = { t: number; open: number; high: number; low: number; close: number; volume: number; vwap?: number | null; final: boolean; source: string };
 export type ChartData = {
   symbol: string;
-  source: string;
-  last_date: string;
+  provider: string;
+  authority: string;
+  adjustment: string;
+  last_confirmed: string;
+  provisional: { provider: string; feed: string; status: DataStatus; as_of: string } | null;
   bars: Bar[];
   overlays?: Record<string, (number | null)[]>;
   avwap_anchor?: string;
   volume_profile?: { poc: number; value_area_low: number; value_area_high: number; lookback: number } | null;
 };
+export type Intraday = { symbol: string; status: DataStatus; reason: string; provider: string; feed: string; session_date: string; bars: MinuteBar[]; vwap?: number | null };
 
 export type SignalEvent = {
   date: string;
@@ -128,24 +154,31 @@ export type SignalEvent = {
   forward_realized: Record<string, number | null>;
 };
 
-export type SymbolInfo = { symbol: string; name: string; sector: string; kind: string; cap_bucket: string; first: string; last: string; rows: number; source: string };
+export type Symbols = { benchmarks: string[]; universe: string[]; default: string };
 
 export type Analysis = {
   symbol: string;
   name: string;
+  profile: { name: string; market_cap: number | null; sector: string; industry: string; exchange: string; is_etf: boolean; cap_bucket: string; sector_etf: string } | null;
   as_of: string;
-  source: string;
+  provider: string;
+  authority: string;
+  adjustment: string;
+  quote: Quote | null;
   state: string;
   state_label: string;
   reasons: string[];
+  live: { as_of: string; status: DataStatus; provider: string; state: string; state_label: string; indicators: Record<string, number | null> } | null;
   state_forward_stats: Record<string, { n_samples: number; median: number | null; hit_rate: number | null; unconditional_median: number | null; unconditional_hit_rate: number | null }>;
   state_stats_note: string;
   indicators: Record<string, number | null>;
   percentiles: Record<string, number | null>;
   recent_divergences: { type: string; confirmed: string; pivot1: string; pivot2: string; price: number[]; osc: number[] }[];
-  sector: { etf: string; sector?: string; sector_rs63_vs_benchmark?: number | null; stock_rs63_vs_sector?: number | null; note?: string } | null;
-  market: { benchmark: string; regime: string; bottom: number | null; top: number | null } | null;
-  valuation: { available: boolean; note: string };
+  sector: { etf: string; sector?: string; sector_rs63_vs_benchmark?: number | null; stock_rs63_vs_sector?: number | null } | null;
+  market: { benchmark: string; regime: string; bottom: number | null; top: number | null; basis: string } | null;
+  fundamentals: { provider?: string; ratios?: Record<string, unknown>; metrics?: Record<string, unknown>; earnings?: Record<string, unknown>[];
+    estimates?: Record<string, unknown>[]; dividends?: Record<string, unknown>[]; splits?: Record<string, unknown>[]; holdings?: Record<string, unknown>[]; unavailable: string[] };
+  options: { put_call_volume: number | null; put_call_oi: number | null; atm_iv_30d: number | null; gamma_exposure_usd_per_1pct: number; method: string; as_of: string; contracts: number; kind: string } | { unavailable: string } | null;
   benchmark: string;
 };
 
@@ -155,6 +188,8 @@ export type ScanRow = {
   sector: string;
   kind: string;
   cap_bucket: string;
+  market_cap: number | null;
+  provider: string;
   as_of: string;
   close: number | null;
   rsi14: number | null;
@@ -174,6 +209,10 @@ export type Scan = {
   sectors: string[];
   flags: Record<string, { label: string; direction: string }>;
   flag_evidence: Record<string, { label: string; direction: string; n: number; excess_mean: number | null; excess_hit_rate: number | null; t_stat: number | null }>;
+  skipped: { symbol: string; reason: string }[];
+  providers: string[];
+  profiles: string | null;
+  as_of: string;
   note: string;
   horizon: number;
 };
@@ -206,13 +245,13 @@ export type Backtest = {
   oos: Metrics;
   oos_benchmark: Metrics;
   other_benchmarks?: Record<string, Metrics>;
-  oos_vs_benchmark: { sharpe_diff?: number; sharpe_diff_ci95?: number[]; p_sharpe_diff_le_0?: number; ann_return_diff?: number; ann_return_diff_ci95?: number[] };
+  oos_vs_benchmark: { sharpe_diff?: number; sharpe_diff_ci95?: number[]; ann_return_diff?: number; ann_return_diff_ci95?: number[] };
   oos_by_market_state: Record<string, { n_days: number; ann_return?: number; bench_ann_return?: number; sharpe?: number | null; bench_sharpe?: number | null }>;
   equity: { t: string; equity: number; bench_equity: number }[];
   assumptions: Record<string, string | number>;
   in_sample_defaults: { params: Record<string, number>; metrics: Metrics; warning: string };
   purged_cv?: { folds: { test: string[]; chosen_params: Record<string, number>; test_metrics: Metrics; benchmark: Metrics; beat_benchmark_sharpe: boolean }[]; share_folds_beating_benchmark: number; error?: string };
-  data: { source: string; first: string; last: string; survivorship: string };
+  data: { provider: string; authority: string; adjustment: string; first: string; last: string; sources: string[]; basis: string; survivorship: string };
 };
 
 export type Strategy = { id: string; name: string; description: string; grid: Record<string, number[]>; defaults: Record<string, number>; needs: string[] };
@@ -247,6 +286,7 @@ export type SignalReport = {
 export type Analogs = {
   symbol: string;
   as_of?: string;
+  sources?: string[];
   features_used?: string[];
   matches: { date: string; similarity: number; event: string | null; forward: Record<string, number | null> }[];
   outcome_distribution?: Record<string, Dist>;
@@ -255,20 +295,21 @@ export type Analogs = {
   note?: string;
 };
 
+export type StreamStatus = { provider: string; feed: string; kind: string; delay_s: number; state: string; error: string | null; active: boolean; symbols: number; max_symbols: number; messages: number; reconnects: number; last_message: string | null };
 export type Status = {
-  symbols_loaded: number;
-  prices: { symbol: string; first: string; last: string; rows: number; source: string; fetched_at: string; stale: boolean }[];
-  series: { id: string; name: string; category: string; freq: string; default_source: string; note: string; available: boolean; last_obs?: string; available_at?: string; source?: string }[];
-  breadth: { available: boolean; note?: string; members?: number; with_data?: number };
-  recent_errors: { source: string; target: string; at: string; message: string }[];
-  auth_enabled: boolean;
-  providers: Record<string, boolean>;
-  unavailable: Record<string, string>;
-  data_version: number;
+  session: SessionInfo;
+  licensing: { access_mode: string; licensed_for_public_display: string[] | string };
+  streams: StreamStatus[];
+  live: Quote[];
+  providers: Record<string, { configured: boolean; roles: string[]; [k: string]: unknown }>;
+  history: { symbol: string; loaded: boolean; provider?: string; authority?: string; adjustment?: string; first?: string; last?: string; fetched_at?: string; complete_through_last_session?: boolean; issues?: string[]; provider_errors?: string[] }[];
+  macro: { id: string; name: string; category: string; freq: string; note: string; available: boolean; current: boolean; last_obs: string | null; known_since: string | null; source: string | null; fred_last_updated: string | null; copyright: boolean | null; error: string | null; loaded: boolean }[];
+  breadth: { available: boolean; note?: string; members_today?: number; members_with_data_today?: number; first?: string; last?: string; providers?: string[]; provisional_as_of?: string | null };
+  limitations: Record<string, string>;
+  now: string;
 };
 
-export type AlertRule = { id: number; name: string; kind: string; params: Record<string, unknown>; enabled: boolean; cooldown_minutes: number; armed: boolean; last_fired_at: string | null };
-export type AlertKinds = { kinds: Record<string, string>; scores: Record<string, string>; breadth_metrics: Record<string, string>; scanner_flags: Record<string, string> };
-export type AlertEvent = { id: number; rule_id: number; fired_at: string; title: string; body: string; delivered: number };
-
+export type AlertRule = { id: string; name: string; kind: string; params: Record<string, unknown>; cooldown_minutes: number };
+export type AlertEvent = { rule_id: string; fired_at: string; title: string; body: string };
+export type AlertKinds = { kinds: Record<string, string>; scores: Record<string, string>; breadth_metrics: Record<string, string>; scanner_flags: Record<string, string>; note: string };
 export type AnalystAnswer = { answer: string; citations: { tool: string; symbol?: string; as_of?: string | null; source?: string }[]; tool_calls: { tool: string; input: Record<string, unknown> }[]; model: string };

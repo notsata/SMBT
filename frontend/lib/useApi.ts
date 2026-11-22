@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./api";
 
-// In-memory cache so tab switches render instantly; the service worker adds offline persistence.
+// Tab-memory cache so page switches render instantly while the fresh copy loads; gone on refresh, never persisted.
 const cache = new Map<string, unknown>();
 
 export function useApi<T>(path: string | null) {

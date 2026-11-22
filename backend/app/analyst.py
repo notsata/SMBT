@@ -9,12 +9,12 @@ import logging
 
 import anthropic
 import pandas as pd
-from sqlalchemy.orm import Session
 
 from . import services as S
 from .backtest import validation as V
 from .config import get_settings
 from .quant import analogs
+from .market.model import Unavailable
 from .scanner import scan
 
 log = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ Rules:
 - Every number you state (price, score, percentile, probability, return, count) must come from a tool result in this conversation. Never estimate, recall, or invent market data. If a tool says a metric is unavailable or stale, say so plainly.
 - Keep three kinds of evidence distinct and name which one you are using: heuristic scores (0-100 composites, not probabilities), empirical frequencies (counted from history, with sample sizes and episode counts), and historical analogs (similarity, small samples).
 - Always present both the bullish and the bearish evidence, then a balanced conclusion. State sample sizes; call results with fewer than ~8 independent episodes anecdotal. Note when a result failed out-of-sample validation (negative Brier skill, p-value or q-value above 0.05/0.10, walk-forward underperformance).
-- Data is end-of-day and may be delayed; mention the as-of date.
+- Every value carries a status (LIVE, DELAYED, STALE, CLOSED, UNAVAILABLE) and a basis: "confirmed" values come from completed daily closes (the only basis used for validation statistics); "provisional" values include today's in-progress bar from the live feed. Say which you are quoting and give its as-of time; never present DELAYED or STALE data as live.
 - Cite sources inline in brackets, e.g. [overview SPY, as of 2026-11-20] or [event study: bottom_score, 60d].
 - This is research, not investment advice. Do not tell the user to buy or sell.
 - Be concise and structured: short headline answer, then Bullish evidence / Bearish evidence / What history says / Caveats."""
@@ -58,34 +58,35 @@ def _compact_overview(ov: dict) -> dict:
     c = ov["cards"]
     probs = {side: [{k: p.get(k) for k in ("event", "horizon", "probability", "base_rate", "episodes", "sufficient")} | {"oos_brier_skill": (p.get("oos") or {}).get("brier_skill")}
                     for p in ov["probabilities"].get(side, []) if p.get("available")] for side in ("bottom", "top")}
+    keep = ("value", "status", "basis", "as_of", "provider", "coverage", "confirmed", "confirmed_as_of", "note")
     return {
-        "symbol": ov["symbol"], "as_of": ov["as_of"], "data_kind": ov["data_kind"], "price": ov["price"],
-        "regime": {"label": c["regime"]["display"], "reasons": c["regime"].get("reasons")},
-        "scores": {k: {"value": c[k]["value"], "coverage": c[k].get("coverage")} for k in ("bottom", "top", "trend")},
-        "trend_direction": c["trend"].get("direction"),
+        "symbol": ov["symbol"], "session": ov["session"], "confirmed_as_of": ov["confirmed_as_of"], "provisional_as_of": ov.get("provisional_as_of"),
+        "live_quote": {k: (ov.get("quote") or {}).get(k) for k in ("status", "last", "last_ts", "change_pct", "provider", "feed", "delay_s")},
+        "regime": {"label": c["regime"]["display"], "status": c["regime"]["status"], "basis": c["regime"]["basis"], "reasons": c["regime"].get("reasons")},
+        "scores": {k: {x: c[k].get(x) for x in keep} for k in ("bottom", "top", "trend")},
         "bottom_components": [x for x in ov["explain"]["bottom"]["components"] if x["available"]],
         "top_components": [x for x in ov["explain"]["top"]["components"] if x["available"]],
-        "vix": {k: c["vix"].get(k) for k in ("value", "percentile", "term_ratio", "as_of", "source", "stale")},
-        "breadth": {k: c["breadth"].get(k) for k in ("value", "pct_above_200", "mcclellan", "nhnl", "note", "as_of")},
-        "sentiment": {k: c["sentiment"].get(k) for k in ("value", "components", "source")},
-        "macro": {k: c["macro"].get(k) for k in ("value", "components")},
+        "vix": {k: c["vix"].get(k) for k in ("value", "status", "basis", "as_of", "provider", "percentile", "term_ratio")},
+        "breadth": {k: c["breadth"].get(k) for k in ("value", "status", "basis", "pct_above_200", "mcclellan", "nhnl", "note", "as_of")},
+        "sentiment": {k: c["sentiment"].get(k) for k in ("value", "status", "components", "method")},
+        "macro": {k: c["macro"].get(k) for k in ("value", "status", "components", "note")},
         "probabilities": probs,
-        "unavailable_metrics": ov.get("unavailable"),
+        "limitations": ov.get("limitations"),
     }
 
 
-def run_tool(s: Session, name: str, args: dict) -> tuple[dict, list[dict]]:
-    sym = (args.get("symbol") or "").upper() or S.default_benchmark(s)
+def run_tool(name: str, args: dict) -> tuple[dict, list[dict]]:
+    sym = (args.get("symbol") or "").upper() or S.default_benchmark()
     if name == "get_market_overview":
-        ov = S.overview(s, sym)
-        return _compact_overview(ov), [{"tool": name, "symbol": sym, "as_of": ov["as_of"], "source": ov["price"]["source"]}]
+        ov = S.overview(sym)
+        return _compact_overview(ov), [{"tool": name, "symbol": sym, "as_of": ov["provisional_as_of"] or ov["confirmed_as_of"], "source": ov["price"]["provider"]}]
     if name == "analyze_symbol":
-        a = S.analyze(s, sym)
-        return a, [{"tool": name, "symbol": sym, "as_of": a["as_of"], "source": a["source"]}]
+        a = S.analyze(sym)
+        return a, [{"tool": name, "symbol": sym, "as_of": a["as_of"], "source": a["provider"]}]
     if name in ("get_signal_statistics", "get_signal_scoreboard", "get_correction_frequency", "get_historical_analogs"):
-        f, sf, meta = S.market_frame(s, sym)
-        b = S.bars(s, sym)
-        cite = [{"tool": name, "symbol": sym, "as_of": f.index[-1].date().isoformat(), "source": meta["price"]["source"]}]
+        f, sf, meta = S.market_frame(sym)
+        b = S.bars(sym)
+        cite = [{"tool": name, "symbol": sym, "as_of": f.index[-1].date().isoformat(), "source": meta["price"]["provider"]}]
         if name == "get_signal_statistics":
             rep = V.signal_report(b, f, sf, args["signal"], float(args.get("threshold") or 70))
             rep["event_study"]["events"] = rep["event_study"]["events"][-15:]
@@ -108,16 +109,16 @@ def run_tool(s: Session, name: str, args: dict) -> tuple[dict, list[dict]]:
             m.pop("features", None)
         return S.clean(res), cite
     if name == "run_scanner":
-        r = scan(s, direction=args["direction"], kind=args.get("kind", ""), sector=args.get("sector", ""), signal=args.get("signal", ""), limit=12)
+        r = scan(direction=args["direction"], kind=args.get("kind", ""), sector=args.get("sector", ""), signal=args.get("signal", ""), limit=12)
         rows = [{k: x[k] for k in ("symbol", "name", "sector", "flags", f"{args['direction']}_confluence", f"{args['direction']}_evidence", "rsi14", "dist200", "as_of")} for x in r["rows"]]
         return {"rows": rows, "flag_evidence": r["flag_evidence"], "note": r["note"]}, [{"tool": name, "as_of": rows[0]["as_of"] if rows else None, "source": "scanner (EOD)"}]
     if name == "get_data_status":
-        st = S.status(s)
-        return {k: st[k] for k in ("prices", "breadth", "unavailable", "recent_errors")} | {"series": [x for x in st["series"] if x["available"]]}, [{"tool": name, "source": "data status"}]
+        st = S.status()
+        return {k: st[k] for k in ("session", "streams", "history", "breadth", "limitations")} | {"macro": [x for x in st["macro"] if x["loaded"]]}, [{"tool": name, "source": "data status"}]
     raise ValueError(f"unknown tool {name}")
 
 
-def ask(s: Session, question: str, history: list[dict] | None = None) -> dict:
+def ask(question: str, history: list[dict] | None = None) -> dict:
     st = get_settings()
     if not st.anthropic_api_key:
         raise RuntimeError("AI analyst disabled: set ANTHROPIC_API_KEY on the backend.")
@@ -151,11 +152,11 @@ def ask(s: Session, question: str, history: list[dict] | None = None) -> dict:
         for u in uses:
             args = u.input if isinstance(u.input, dict) else {}
             try:
-                data, cite = run_tool(s, u.name, args)
+                data, cite = run_tool(u.name, args)
                 citations += cite
                 calls.append({"tool": u.name, "input": args})
                 results.append({"type": "tool_result", "tool_use_id": u.id, "content": json.dumps(data, default=str)[:60000]})
-            except (S.NotFound, KeyError, ValueError) as e:
+            except (Unavailable, KeyError, ValueError) as e:
                 results.append({"type": "tool_result", "tool_use_id": u.id, "content": f"Error: {e}", "is_error": True})
         messages.append({"role": "user", "content": results})  # all results in one message keeps parallel tool use working
     text = "\n".join(b.text for b in (resp.content if resp else []) if b.type == "text").strip()

@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { LineChart, type LineSpec } from "@/components/charts";
 import { ErrorBox, Note, Panel, Spinner } from "@/components/ui";
-import type { SymbolInfo } from "@/lib/api";
+import type { Symbols } from "@/lib/api";
 import { useApi } from "@/lib/useApi";
 
 type Ind = { symbol: string; t: string[]; series: Record<string, (number | null)[]>; labels: Record<string, string>; available: string[] };
@@ -16,7 +16,7 @@ const PRESETS: Record<string, string[]> = {
 };
 
 export default function ChartsPage() {
-  const syms = useApi<{ symbols: SymbolInfo[]; default: string | null }>("/symbols");
+  const syms = useApi<Symbols>("/symbols");
   const [symbol, setSymbol] = useState<string | null>(null);
   const [picked, setPicked] = useState<string[]>(["bottom", "top", "rsi14"]);
   const sym = symbol ?? syms.data?.default ?? null;
@@ -37,7 +37,7 @@ export default function ChartsPage() {
       <div className="flex flex-wrap items-center gap-2">
         <h1 className="mr-2 text-lg font-semibold">Indicator comparison</h1>
         <select aria-label="Symbol" value={sym ?? ""} onChange={(e) => setSymbol(e.target.value)} className="rounded-lg border border-line bg-panel px-2 py-1 text-xs">
-          {syms.data?.symbols.map((s) => <option key={s.symbol}>{s.symbol}</option>)}
+          {syms.data && [...new Set([...syms.data.benchmarks, ...syms.data.universe])].map((s) => <option key={s}>{s}</option>)}
         </select>
         {Object.entries(PRESETS).map(([name, ks]) => (
           <button key={name} onClick={() => setPicked(ks)} className="rounded-lg border border-line px-2 py-1 text-xs text-muted hover:text-fg">{name}</button>
@@ -56,7 +56,7 @@ export default function ChartsPage() {
           {full && <button className="absolute right-3 top-3 z-10 rounded border border-line bg-panel px-2 text-xs" onClick={() => setFull(false)}>Close</button>}
           {ind.data ? <LineChart t={ind.data.t} lines={lines} height={full ? (typeof window !== "undefined" ? window.innerHeight - 20 : 800) : 140 + 130 * lines.length} /> : <Spinner />}
         </div>
-        <Note>Price in the top pane, one indicator per pane below, all on one time axis. Up to five indicators. Unavailable indicators (e.g. breadth without constituent data) are not offered.</Note>
+        <Note>Completed sessions only (confirmed closes). Price in the top pane, one indicator per pane below, all on one time axis. Up to five indicators. Unavailable indicators (e.g. breadth without constituent data) are not offered.</Note>
       </Panel>
     </div>
   );
