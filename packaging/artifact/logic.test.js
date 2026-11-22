@@ -32,11 +32,19 @@ for (const p of [qJson, JSON.stringify(qJson), qCsv]) {
   assert.equal(q.last, 101); assert.equal(q.day, "2026-11-20"); assert.equal(q.prevClose, 100.5); close(q.changePct, 0.004975, 1e-9, "pct");
 }
 assert.equal(S.parseQuote({ "Global Quote": {} }), null, "unknown symbol -> no quote");
+// the connector's envelope (shape as returned by the Alpha Vantage claude.ai connector; values made up)
+assert.equal(S.parseQuote({ result: qCsv }).last, 101, "{result: csv} quote");
+assert.equal(S.parseQuote(JSON.stringify({ result: qCsv })).day, "2026-11-20", "{result} as JSON text");
+assert.throws(() => S.parseDaily({ error: { type: "rate_limit", message: "The outputsize=full parameter value is a premium feature.", detail: "x" } }), /premium feature/);
+assert.equal(S.providerMessage(JSON.stringify({ error: { type: "rate_limit", message: "25 requests per day" } })), "25 requests per day");
+assert.equal(S.providerMessage({ result: "Thank you for using Alpha Vantage! Please subscribe, or wait." }), "Thank you for using Alpha Vantage! Please subscribe, or wait.");
+assert.equal(S.providerMessage({ result: qCsv }), null);
+assert.equal(S.parseQuote({ result: "symbol,open,high,low,price,volume,latestDay,previousClose,change,changePercent\r\n" }), null, "unknown symbol: header only");
 assert.throws(() => S.parseQuote({ Information: "We have detected your API key ... 25 requests per day." }), /25 requests/);
 assert.throws(() => S.parseDaily({ "Error Message": "Invalid API call." }), /Invalid API call/);
 const dJson = { "Meta Data": {}, "Time Series (Daily)": { "2026-11-20": { "1. open": "1", "2. high": "2", "3. low": "0.5", "4. close": "1.5", "5. volume": "10" }, "2026-11-19": { "1. open": "1", "2. high": "1.2", "3. low": "0.9", "4. close": "1", "5. volume": "9" } } };
 const dCsv = "timestamp,open,high,low,close,volume\r\n2026-11-20,1,2,0.5,1.5,10\r\n2026-11-19,1,1.2,0.9,1,9\r\n2026-11-18,1,0.5,0.9,1,9\r\n";
-for (const p of [dJson, dCsv]) {
+for (const p of [dJson, dCsv, { result: dCsv }]) {
   const b = S.parseDaily(p);
   assert.deepEqual(b.map((x) => x.t), ["2026-11-19", "2026-11-20"], "oldest first, invalid high<low row dropped");
 }

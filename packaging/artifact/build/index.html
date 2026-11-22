@@ -93,6 +93,7 @@ td:last-child { text-align: right; font-family: var(--mono); }
           <button class="btn ghost" id="refresh" type="button">Refresh</button>
           <label><input type="checkbox" id="auto"> Auto-refresh every 60 s</label>
           <label><input type="checkbox" id="rt"> Ask for real-time (premium keys)</label>
+          <label><input type="checkbox" id="full"> Full history (premium keys)</label>
         </div>
       </section>
       <section class="panel" aria-labelledby="c-h">
@@ -132,7 +133,7 @@ td:last-child { text-align: right; font-family: var(--mono); }
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
   const kv = (el, rows) => { el.innerHTML = rows.filter(([, v]) => v !== undefined && v !== null && v !== "").map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join(""); };
 
-  const st = { mcp: null, perms: null, symbols: [...DEFAULTS], symbol: "SPY", props: {}, fullDenied: false, calls: 0, errors: [], tools: null,
+  const st = { mcp: null, perms: null, symbols: [...DEFAULTS], symbol: "SPY", props: {}, compactOnly: true, calls: 0, errors: [], tools: null,
     quote: null, quoteAt: null, quoteRealtime: false, bars: null, timer: null, loadId: 0 };
 
   // ---------- session clock ----------
@@ -194,7 +195,10 @@ td:last-child { text-align: right; font-family: var(--mono); }
     if (code === "not_in_manifest") { banner("This page isn't allowed to use Alpha Vantage", " Allow it from the page's permissions.", ' <button class="btn ghost" id="perm" type="button">Permissions</button>'); $("perm") && ($("perm").onclick = () => st.perms && st.perms.manage().catch(() => {})); return null; }
     if (code === "approval_required") { banner("Approval needed", " Tap Refresh to approve the Alpha Vantage request."); return null; }
     if (code === "blocked_by_policy") { banner("Blocked by your organization", " Your organization's policy blocks this Alpha Vantage tool."); return null; }
-    if (code === "tool_error") return (e.message || "Alpha Vantage reported an error").slice(0, 300);
+    if (code === "tool_error") { // the connector's own words: rate limit, premium-only feature, unknown symbol
+      const r = e.result || {}, text = (r.content || []).filter((c) => c.type === "text").map((c) => c.text).join("\n");
+      return (SMBT.providerMessage(r.structuredContent) || SMBT.providerMessage(text) || SMBT.providerMessage(e.message) || "Alpha Vantage reported an error").slice(0, 300);
+    }
     if (code === "server_unavailable" || code === "upstream_error") return "Alpha Vantage didn't answer. Try Refresh in a moment.";
     return (e && e.message) || "The request failed.";
   }
@@ -243,15 +247,17 @@ td:last-child { text-align: right; font-family: var(--mono); }
 
   // ---------- daily history, indicators, state ----------
   async function loadDaily(id) {
-    let payload, full = !st.fullDenied;
+    let payload, full = $("full").checked; // free keys get the last 100 sessions; full history is an Alpha Vantage premium feature
+    st.compactOnly = !full;
     try {
       payload = await call(T_DAILY, input(T_DAILY, { symbol: st.symbol, outputsize: full ? "full" : "compact" }));
       SMBT.parseDaily(payload); // throws on a provider message
     } catch (e) {
       if (id !== st.loadId) return;
       const m = e instanceof Error && !e.code ? e.message : explain(e);
-      if (full && m && /premium/i.test(m)) { // full history is a premium feature on Alpha Vantage: use the compact series once
-        st.fullDenied = true; full = false;
+      if (full && m && /premium/i.test(m)) { // key lacks full history: say so and use the compact series once
+        $("full").checked = false; st.compactOnly = true; full = false;
+        banner("Full history needs an Alpha Vantage premium key", " Showing the last 100 sessions.");
         try { payload = await call(T_DAILY, input(T_DAILY, { symbol: st.symbol, outputsize: "compact" })); }
         catch (e2) { return renderDailyError(e2 instanceof Error && !e2.code ? e2.message : explain(e2)); }
       } else return m && renderDailyError(m);
@@ -280,7 +286,7 @@ td:last-child { text-align: right; font-family: var(--mono); }
     const s = SMBT.sessionAt(new Date());
     const fresh = lastT >= s.lastCompleted ? (s.session === "closed" ? "CLOSED" : "DELAYED") : "STALE";
     $("i-meta").innerHTML = `<span class="badge b-${fresh}">${fresh}</span> closes through ${lastT}`;
-    $("c-meta").textContent = `${bars.length} sessions · ${bars[0].t} → ${lastT}${st.fullDenied ? " (compact: last 100 only)" : ""}`;
+    $("c-meta").textContent = `${bars.length} sessions · ${bars[0].t} → ${lastT}${st.compactOnly ? " (last 100 sessions)" : ""}`;
     const rows = [
       ["Close", fmt(x.close)], ["RSI (14)", fmt(x.rsi14, 1)], ["50-day average", fmt(x.sma50)], ["200-day average", fmt(x.sma200)],
       ["Distance from 200-day", pct(x.dist200, 1, true)], ["200-day slope (20 sessions)", pct(x.sma200_slope, 2, true)],
@@ -292,7 +298,7 @@ td:last-child { text-align: right; font-family: var(--mono); }
     const [state, why] = SMBT.classify(x);
     $("state").classList.remove("skeleton");
     $("state").innerHTML = `<div class="state s-${state}">${esc(SMBT.STATE_LABELS[state])}</div><ul class="why">${why.map((w) => `<li>${esc(w)}</li>`).join("")}</ul>`
-      + (x.sma200 === null && st.fullDenied ? `<p class="note">Your key returns only the last 100 sessions; the 200-day rules need full history (an Alpha Vantage premium key).</p>` : "");
+      + (x.sma200 === null && st.compactOnly ? `<p class="note">The 200-day rules need more than the last 100 sessions: tick "Full history" if your Alpha Vantage key is premium.</p>` : "");
     drawChart(bars, x);
   }
 
@@ -331,7 +337,7 @@ td:last-child { text-align: right; font-family: var(--mono); }
     kv($("d-kv"), [["Connector", SERVER], ["Tools", st.tools ? st.tools.join(", ") || "none listed" : "not checked yet"],
       ["Quote inputs", st.props[T_QUOTE] ? [...st.props[T_QUOTE]].join(", ") : "symbol only (schema not available)"],
       ["Daily inputs", st.props[T_DAILY] ? [...st.props[T_DAILY]].join(", ") : "symbol only (schema not available)"],
-      ["History depth", st.fullDenied ? "compact (100 sessions)" : "full requested"], ["Requests this visit", String(st.calls)],
+      ["History depth", st.compactOnly ? "compact (100 sessions)" : "full"], ["Requests this visit", String(st.calls)],
       ["Recent errors", st.errors.join(" | ") || "none"]]);
   }
 
@@ -363,6 +369,7 @@ td:last-child { text-align: right; font-family: var(--mono); }
     if ($("auto").checked) st.timer = setInterval(() => { if (document.visibilityState === "visible" && SMBT.sessionAt(new Date()).session !== "closed") loadQuote(st.loadId); }, 60000);
   };
   $("rt").onchange = () => st.mcp && loadQuote(st.loadId);
+  $("full").onchange = () => st.mcp && loadDaily(st.loadId);
   renderChips(); renderSession(); renderDiag(); setInterval(renderSession, 30000);
 
   (async () => {

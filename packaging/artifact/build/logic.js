@@ -77,22 +77,37 @@
     return ["STALE", `Provider's latest day is ${latestDay}, but ${s.lastCompleted} has closed`];
   }
 
-  // ---------- Alpha Vantage payloads (JSON or CSV, as the connector returns them) ----------
+  // ---------- Alpha Vantage payloads ----------
+  // The connector wraps data as {"result": "<csv or json text>"} and failures as {"error": {"type", "message", "detail"}};
+  // plain Alpha Vantage JSON ({"Global Quote": ...}, {"Information": ...}) and bare CSV are accepted too.
+  function unwrap(p) {
+    if (typeof p === "string") {
+      const t = p.trim();
+      if (t.startsWith("{")) try { return unwrap(JSON.parse(t)); } catch { /* not JSON: treat as text */ }
+      return t;
+    }
+    if (p && typeof p === "object" && !Array.isArray(p)) {
+      if (typeof p.result === "string" || (p.result && typeof p.result === "object")) return unwrap(p.result);
+      if (p.error) return { "Error Message": typeof p.error === "string" ? p.error : p.error.message || p.error.detail || "Alpha Vantage reported an error" };
+    }
+    return p;
+  }
+  const isCsv = (t) => { const head = t.split(/\r?\n/)[0]; return head.includes(",") && !head.includes(" "); }; // a header alone = no rows
   function providerMessage(p) {
-    if (p && typeof p === "object" && !Array.isArray(p)) for (const k of ["Error Message", "Information", "Note"]) if (typeof p[k] === "string") return p[k];
-    if (typeof p === "string" && !p.includes(",") && p.trim()) return p.trim();
+    const u = unwrap(p);
+    if (u && typeof u === "object" && !Array.isArray(u)) for (const k of ["Error Message", "Information", "Note"]) if (typeof u[k] === "string") return u[k];
+    if (typeof u === "string" && u && !isCsv(u)) return u.slice(0, 400);
     return null;
   }
   function asData(p) { // payload -> object | csv rows | null
-    if (typeof p === "string") {
-      const t = p.trim();
-      if (t.startsWith("{")) try { return JSON.parse(t); } catch { return null; }
-      const lines = t.split(/\r?\n/).filter(Boolean);
-      if (lines.length < 2 || !lines[0].includes(",")) return null;
+    const u = unwrap(p);
+    if (typeof u === "string") {
+      if (!isCsv(u)) return null;
+      const lines = u.split(/\r?\n/).filter(Boolean);
       const head = lines[0].split(",").map((h) => h.trim());
       return lines.slice(1).map((l) => Object.fromEntries(l.split(",").map((v, i) => [head[i], v.trim()])));
     }
-    return p && typeof p === "object" ? p : null;
+    return u && typeof u === "object" ? u : null;
   }
   const num = (v) => { const x = parseFloat(String(v ?? "").replace("%", "")); return Number.isFinite(x) ? x : null; };
   function parseQuote(payload) {
