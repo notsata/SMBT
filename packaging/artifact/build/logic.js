@@ -147,5 +147,15 @@
     return rows.filter((b, i) => i === 0 || b.t !== rows[i - 1].t);
   }
 
-  root.SMBT = { isTradingDay, sessionAt, quoteStatus, parseQuote, parseDaily, providerMessage };
+  /** Alpha Vantage economic series ("timestamp,value", newest first, "." for missing) -> [{date, value}] oldest first. */
+  function parseSeries(payload) {
+    const msg = providerMessage(payload);
+    if (msg) throw new Error(msg);
+    const d = asData(payload);
+    const rows = Array.isArray(d) ? d.map((x) => ({ date: x.timestamp ?? x.date, value: num(x.value) }))
+      : d && Array.isArray(d.data) ? d.data.map((x) => ({ date: x.date, value: num(x.value) })) : [];
+    return rows.filter((r) => /^\d{4}-\d{2}-\d{2}$/.test(r.date || "") && r.value !== null).sort((a, b) => (a.date < b.date ? -1 : 1));
+  }
+
+  root.SMBT = { isTradingDay, sessionAt, quoteStatus, parseQuote, parseDaily, parseSeries, providerMessage };
 })(typeof window !== "undefined" ? window : globalThis);

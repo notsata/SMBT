@@ -46,6 +46,11 @@ assert.throws(() => S.parseDaily({ result: "Error: You have run out of API credi
 const tdD = S.parseDaily({ result: "datetime;open;high;low;close;volume\n2026-11-20;1;2;0.5;1.5;10\n2026-11-19;1;1.2;0.9;1;9\n" });
 assert.deepEqual(tdD.map((x) => x.t), ["2026-11-19", "2026-11-20"]);
 
+// 2c. Alpha Vantage economic series (shape as returned by the connector; values made up)
+const ser = S.parseSeries({ result: "timestamp,value\r\n2026-10-01,4.1\r\n2025-10-01,.\r\n2025-09-01,4.4\r\n" });
+assert.deepEqual(ser, [{ date: "2025-09-01", value: 4.4 }, { date: "2026-10-01", value: 4.1 }], "series: oldest first, '.' dropped");
+assert.throws(() => S.parseSeries({ error: { type: "rate_limit", message: "You are not yet entitled to index data access." } }), /entitled/);
+
 // 3. session clock and status (instants in UTC; New York is UTC-5 in late November)
 const at = (iso) => S.sessionAt(new Date(iso));
 assert.deepEqual(at("2026-11-22T17:00:00Z"), { session: "closed", today: "2026-11-22", tradingDay: false, lastCompleted: "2026-11-20" });

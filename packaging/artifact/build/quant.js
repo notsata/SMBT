@@ -190,6 +190,103 @@
   const col = (f, name) => f[name] || nan(f.n);
   const flag = (f, name) => f[name] || new Array(f.n).fill(false);
 
+  // ---------- market-wide inputs (server quant/breadth.py, quant/macro.py, market/macro.py pit) ----------
+  /** Breadth from member closes (members: {sym: Map date->close}) on the frame's dates. withFlags=false drops the
+   * Zweig thrust and 90%-down-day flags, which mean nothing on a handful of members. */
+  function breadthFrame(t, members, minNames = 100, withFlags = true) {
+    const n = t.length, C = Object.values(members).map((m) => t.map((d) => { const v = m.get(d); return ok(v) ? v : NaN; }));
+    const adv = new Array(n).fill(0), dec = new Array(n).fill(0), cnt = new Array(n).fill(0);
+    for (const c of C) for (let i = 1; i < n; i++) { const r = c[i] / c[i - 1] - 1; if (ok(r)) { cnt[i]++; if (r > 0) adv[i]++; else if (r < 0) dec[i]++; } }
+    const tot = adv.map((a, i) => a + dec[i] || NaN), rana = adv.map((a, i) => (a - dec[i]) / tot[i] * 1000);
+    const out = { breadth_names: cnt, advances: adv, declines: dec };
+    let s = 0; out.ad_line = adv.map((a, i) => (s += a - dec[i]));
+    out.mcclellan_osc = sub(ewm(rana, 0.1, 0), ewm(rana, 0.05, 0));
+    let acc = 0; out.mcclellan_sum = out.mcclellan_osc.map((x) => (ok(x) ? (acc += x) : NaN));
+    const share = (test) => t.map((_, i) => { let yes = 0, all = 0; for (const k of test) { const r = k(i); if (r !== null) { all++; if (r) yes++; } } return all ? yes / all * 100 : NaN; });
+    for (const w of [20, 50, 200]) {
+      const smas = C.map((c) => rollMean(c, w));
+      out[`pct_above_${w}`] = share(C.map((c, k) => (i) => (ok(c[i]) && ok(smas[k][i]) ? c[i] > smas[k][i] : null)));
+    }
+    const his = C.map((c) => rollMax(c, 252, 252)), los = C.map((c) => rollMin(c, 252, 252));
+    out.new_highs = t.map((_, i) => C.reduce((s2, c, k) => s2 + (ok(c[i]) && ok(his[k][i]) && c[i] >= his[k][i] ? 1 : 0), 0));
+    out.new_lows = t.map((_, i) => C.reduce((s2, c, k) => s2 + (ok(c[i]) && ok(his[k][i]) && c[i] <= los[k][i] ? 1 : 0), 0));
+    const denom = t.map((_, i) => C.reduce((s2, c, k) => s2 + (ok(c[i]) && ok(his[k][i]) ? 1 : 0), 0) || NaN);
+    out.nhnl_pct = out.new_highs.map((h, i) => (h - out.new_lows[i]) / denom[i] * 100);
+    const rs = C.map((c) => rsi(c, 14));
+    out.pct_oversold = share(C.map((c, k) => (i) => (ok(c[i]) && ok(rs[k][i]) ? rs[k][i] < 30 : null)));
+    out.pct_overbought = share(C.map((c, k) => (i) => (ok(c[i]) && ok(rs[k][i]) ? rs[k][i] > 70 : null)));
+    if (withFlags) {
+      const zb = ewm(adv.map((a, i) => a / tot[i]), 2 / 11, 0), lo11 = rollMin(zb, 11, 11), thrust = zb.map((z, i) => z > 0.615 && lo11[i] < 0.4);
+      out.zweig_ema = zb; out.zweig_thrust = thrust.map((x, i) => x && !(i > 0 && thrust[i - 1])); out.washout_day = dec.map((d, i) => d / tot[i] >= 0.9);
+    }
+    for (let i = 0; i < n; i++) if (cnt[i] < minNames) for (const k of Object.keys(out)) {
+      if (k === "breadth_names" || k === "advances" || k === "declines") continue;
+      out[k][i] = k === "zweig_thrust" || k === "washout_day" ? false : NaN;
+    }
+    return out;
+  }
+  const MACRO_DEFS = { T10Y2Y: [1, "daily"], T10Y3M: [1, "daily"], DFF: [1, "daily"], UNRATE: [37, "monthly"] }; // [publication lag days, frequency]
+  const maxAge = (lag, freq) => ({ daily: 10, weekly: lag + 14, monthly: lag + 45, quarterly: lag + 120 })[freq];
+  const addDays = (d, k) => new Date(Date.parse(d) + k * 864e5).toISOString().slice(0, 10);
+  /** Values as known on each date: an observation counts from obs date + publication lag, and goes stale after max age. */
+  function pit(obs, lag, freq, t, transform) {
+    let rows = obs.filter((o) => ok(o.value)).sort((a, b) => (a.date < b.date ? -1 : 1)), mx = "";
+    rows = rows.map((r) => { const a = addDays(r.date, lag); mx = a > mx ? a : mx; return { date: r.date, value: r.value, avail: mx }; });
+    if (transform) { const v = transform(rows.map((r) => r.value)); rows = rows.map((r, i) => ({ ...r, value: v[i] })).filter((r) => ok(r.value)); }
+    rows.sort((a, b) => (a.avail < b.avail ? -1 : a.avail > b.avail ? 1 : a.date < b.date ? -1 : 1));
+    let cm = null; rows = rows.filter((r) => { const keep = cm === null || r.date > cm; if (cm === null || r.date > cm) cm = r.date; return keep; });
+    const out = nan(t.length), age = maxAge(lag, freq); let j = -1;
+    for (let i = 0; i < t.length; i++) {
+      while (j + 1 < rows.length && rows[j + 1].avail <= t[i]) j++;
+      if (j >= 0 && (Date.parse(t[i]) - Date.parse(rows[j].date)) / 864e5 <= age) out[i] = rows[j].value;
+    }
+    return out;
+  }
+  function sahm(s) { const ma3 = rollMean(s, 3), lo = rollMin(shift(ma3, 1), 12, 12); return ma3.map((x, i) => x - lo[i]); }
+  function fearGreed(f) {
+    const comps = {}, add = (name, a, invert) => { if (a && a.filter(ok).length > 300) comps[name] = expandingPct(a, 252).map((p) => (invert ? 1 - p : p) * 100); };
+    add("momentum (vs 125d avg)", div(f.close, rollMean(f.close, 125)).map((x) => x - 1));
+    add("strength (new highs - lows)", f.nhnl_pct); add("breadth (McClellan summation)", f.mcclellan_sum);
+    add("volatility (VIX vs 50d)", f.vix_vs50, true); add("safe haven (stocks - bonds 20d)", f.stock_bond_20); add("junk bond demand (credit spread)", f.credit_spread, true);
+    const keys = Object.keys(comps);
+    f.fear_greed_n = f.close.map((_, i) => keys.filter((k) => ok(comps[k][i])).length);
+    f.fear_greed = f.close.map((_, i) => (f.fear_greed_n[i] >= 3 ? mean(keys.map((k) => comps[k][i])) : NaN));
+    f.fg = comps;
+  }
+  function macroRisk(f) {
+    const c = {}, any = (a) => a && a.some(ok);
+    if (any(f.curve_10y2y)) c["yield curve inverted / un-inverting"] = f.curve_10y2y.map((x, i) => (ok(x) ? Math.max(x < 0 ? 1 : 0, f.curve_uninversion[i] ? 1 : 0) : NaN));
+    if (any(f.credit_spread)) { c["credit spread percentile"] = expandingPct(f.credit_spread, 252); c["credit widening (63d)"] = expandingPct(f.credit_chg63, 252); }
+    if (any(f.nfci)) c["financial conditions tight"] = f.nfci.map((x) => (ok(x) ? Math.min(0.5, Math.max(-0.5, x)) + 0.5 : NaN));
+    if (any(f.sahm)) c["unemployment rising (Sahm)"] = clip(f.sahm.map((x) => x / 0.5), 0, 1);
+    if (any(f.fed_chg252)) c["Fed tightening (12m change)"] = clip(f.fed_chg252.map((x) => x / 2), 0, 1);
+    if (any(f.real_10y)) c["real yields high"] = expandingPct(f.real_10y, 252);
+    if (any(f.philly_mfg)) c["manufacturing contraction"] = f.philly_mfg.map((x) => (ok(x) ? Math.min(1, Math.max(0, -x / 20)) : NaN));
+    if (any(f.core_cpi_yoy)) c["core inflation above 3%"] = f.core_cpi_yoy.map((x) => (ok(x) ? Math.min(1, Math.max(0, (x - 2) / 2)) : NaN));
+    const keys = Object.keys(c);
+    f.macro_risk = f.close.map((_, i) => { const v = keys.map((k) => c[k][i]).filter(ok); return v.length >= 2 ? mean(v) * 100 : NaN; });
+    f.mr = c;
+  }
+  /** Adds market-wide columns to a technical frame (before any score is computed). x: {members, minNames, breadthFlags,
+   * vix: Map date->close, tlt: Map date->close, macro: {T10Y2Y|T10Y3M|DFF|UNRATE: [{date, value}]}} */
+  function augment(f, x) {
+    const at = (m) => f.t.map((d) => { const v = m.get(d); return ok(v) ? v : NaN; });
+    if (x.members && Object.keys(x.members).length) Object.assign(f, breadthFrame(f.t, x.members, x.minNames ?? 100, x.breadthFlags ?? true));
+    if (x.vix) { const v = at(x.vix); f.vix = v; f.vix_vs50 = div(v, rollMean(v, 50, 40)); }
+    if (x.tlt) f.stock_bond_20 = sub(f.roc20, pctChange(at(x.tlt), 20));
+    const m = x.macro || {}, P_ = (sid, tr) => (m[sid] ? pit(m[sid], MACRO_DEFS[sid][0], MACRO_DEFS[sid][1], f.t, tr) : null);
+    if (m.T10Y2Y) {
+      const curve = P_("T10Y2Y"); f.curve_10y2y = curve;
+      f.curve_inverted_days = rollSum(curve.map((v) => (ok(v) ? (v < 0 ? 1 : 0) : NaN)), 252, 60);
+      f.curve_uninversion = curve.map((v, i) => v > 0 && f.curve_inverted_days[i] >= 60);
+    }
+    if (m.T10Y3M) f.curve_10y3m = P_("T10Y3M");
+    if (m.DFF) { f.fed_funds = P_("DFF"); f.fed_chg252 = sub(f.fed_funds, shift(f.fed_funds, 252)); }
+    if (m.UNRATE) { f.sahm = P_("UNRATE", sahm); f.unrate = P_("UNRATE"); }
+    fearGreed(f); macroRisk(f);
+    return f;
+  }
+
   // ---------- regime and scores ----------
   const REGIMES = { strong_bull: "Strong bull market", bull_correction: "Bull market correction", sideways: "Sideways consolidation", early_bear: "Early bear market",
     bear_capitulation: "Bear market capitulation", recovery: "Recovery / accumulation", distribution: "Potential distribution / market top" };
@@ -212,7 +309,9 @@
     const pc = (v, d = 1) => `${v > 0 ? "+" : ""}${(v * 100).toFixed(d)}%`;
     return [`Close ${f.close[i] > f.sma200[i] ? "above" : "below"} 200-day average (${pc(f.dist200[i])})`,
       `200-day average ${f.sma200_slope[i] > 0 ? "rising" : "falling"} (${pc(f.sma200_slope[i], 2)} over 20d)`,
-      `Drawdown from 52-week high ${(f.drawdown[i] * 100).toFixed(1)}%`, `RSI(14) ${f.rsi14[i].toFixed(0)}`];
+      `Drawdown from 52-week high ${(f.drawdown[i] * 100).toFixed(1)}%`, `RSI(14) ${f.rsi14[i].toFixed(0)}`,
+      ...(f.pct_above_50 && ok(f.pct_above_50[i]) ? [`${f.pct_above_50[i].toFixed(0)}% of breadth members above 50-day average`] : []),
+      ...(f.vix && ok(f.vix[i]) ? [`VIX ${f.vix[i].toFixed(1)}`] : [])];
   }
   const C = (id, label, category, fn, detail) => ({ id, label, category, fn, detail });
   const inv = (a) => a.map((x) => 1 - x);
@@ -757,5 +856,6 @@
 
   root.SMBTQ = { technicalFrame, scoreFrame, explain, classifyRegime, regimeReasons, REGIMES, BOTTOM, TOP, scoreProbabilities, describe, HORIZONS,
     findAnalogs, compareKeyDates, run, metrics, STRATEGIES, walkForward, purgedCv, signalLibrary, eventStudy, signalScoreboard, signalReport, turningPoints, bhQvalues,
-    signalEvents, stateInputs, classifyRow, stateStats, STATE_LABELS, FLAGS, scanSymbol, scanSummary, expandingPct, fwdReturn, fwdMinReturn, zigzag, ok };
+    signalEvents, stateInputs, classifyRow, stateStats, STATE_LABELS, FLAGS, scanSymbol, scanSummary, expandingPct, fwdReturn, fwdMinReturn, zigzag, ok,
+    augment, breadthFrame, pit, MACRO_DEFS };
 })(typeof window !== "undefined" ? window : globalThis);

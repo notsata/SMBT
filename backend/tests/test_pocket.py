@@ -131,3 +131,69 @@ def test_phone_quant_engine_matches_server(tmp_path):
     r = subprocess.run(["node", str(ART / "quant.test.js"), str(ART / "build" / "quant.js"), str(tmp_path / "ref.json")], capture_output=True, text=True, timeout=600)
     assert r.returncode == 0, r.stdout + r.stderr
     assert r.stdout.startswith("ok:")
+
+
+@pytest.mark.skipif(not shutil.which("node"), reason="needs Node")
+def test_phone_market_inputs_match_server(tmp_path, monkeypatch):
+    """Breadth, VIX, stock/bond, point-in-time macro, Fear & Greed and macro risk: same inputs through the server's
+    Python (MacroStore.pit, breadth_frame, sentiment_frame, macro_frame, fear_greed, macro_risk) and the phone's JS."""
+    from app.market import macro as M
+    from app.market.providers import fred
+    from app.quant import scores
+    from app.quant.analogs import find_analogs
+    from app.quant.breadth import breadth_frame
+    from app.quant.macro import fear_greed, macro_frame, macro_risk, sentiment_frame
+
+    rng = np.random.default_rng(5)
+    b = fixture_bars("^GSPC")
+    f = technical_frame(b)
+    idx = f.index
+    members = {}
+    for k in range(11):  # synthetic members, some listed later, as sector funds are
+        start = [0, 0, 0, 0, 0, 0, 0, 0, 0, 1700, 3900][k]
+        px = 50 * np.exp(np.cumsum(rng.normal(0.0003, 0.013, len(idx))))
+        px[:start] = np.nan
+        members[f"M{k}"] = pd.Series(px, index=idx)
+    close_m = pd.DataFrame(members)
+    tlt = pd.Series(90 * np.exp(np.cumsum(rng.normal(0.0001, 0.008, len(idx)))), index=idx)
+    vix = fixture_bars("^VIX")["close"]
+    days = pd.bdate_range("1995-01-02", "2019-01-10")
+    walk = lambda lo, sd: np.round(lo + np.cumsum(rng.normal(0, sd, len(days))), 2)  # noqa: E731
+    raw = {"T10Y2Y": pd.Series(walk(1.0, 0.03), index=days), "T10Y3M": pd.Series(walk(1.5, 0.03), index=days),
+           "DFF": pd.Series(np.clip(walk(4.0, 0.02), 0, None), index=days),
+           "UNRATE": pd.Series(np.round(5 + np.cumsum(rng.normal(0, 0.15, 300)), 1), index=pd.date_range("1994-01-01", periods=300, freq="MS"))}
+    monkeypatch.setattr(fred, "observations", lambda sid, revised: (pd.DataFrame({"value": raw[sid].values, "available_at": None}, index=raw[sid].index.date), "test"))
+    store = M.MacroStore()
+    empty = pd.Series(np.nan, index=idx)
+
+    def pit(sid, transform=None):
+        return store.pit(sid, idx, transform)[0] if sid in raw else empty
+
+    bf = breadth_frame(close_m, None, min_names=9)
+    f = f.join(bf.reindex(idx)).join(sentiment_frame(idx, vix, None)).join(macro_frame(idx, pit))
+    f["stock_bond_20"] = f["roc20"] - tlt.reindex(idx).pct_change(20, fill_method=None)
+    f = f.join(fear_greed(f)).join(macro_risk(f))
+    sf = scores.score_frame(f)
+    n = len(f)
+    cps = list(range(0, n, 53)) + [n - 1]
+    cols = ["pct_above_20", "pct_above_50", "pct_above_200", "ad_line", "mcclellan_osc", "mcclellan_sum", "nhnl_pct", "pct_oversold", "pct_overbought", "zweig_ema",
+            "vix", "vix_vs50", "stock_bond_20", "curve_10y2y", "curve_10y3m", "curve_inverted_days", "curve_uninversion", "fed_funds", "fed_chg252", "sahm", "unrate",
+            "fear_greed", "fear_greed_n", "macro_risk"]
+    ref = {
+        "bars": [{"t": d.date().isoformat(), "o": float(x.open), "h": float(x.high), "l": float(x.low), "c": float(x.close), "v": float(x.volume)} for d, x in b.iterrows()],
+        "members": {k: [[d.date().isoformat(), float(v)] for d, v in s.dropna().items()] for k, s in members.items()},
+        "min_names": 9,
+        "vix": [[d.date().isoformat(), float(v)] for d, v in vix.items()],
+        "tlt": [[d.date().isoformat(), float(v)] for d, v in tlt.items()],
+        "macro": {k: [[d.isoformat() if hasattr(d, "isoformat") else str(d), float(v)] for d, v in zip(s.index.date, s.values)] for k, s in raw.items()},
+        "cols": {c: [[i, f[c].iloc[i]] for i in cps] for c in cols},
+        "flags": {c: [int(i) for i in np.flatnonzero(f[c].fillna(False).values)] for c in ("zweig_thrust", "washout_day")},
+        "regime": [r if isinstance(r, str) else None for r in sf["regime"]],
+        "scores": {k: [[i, sf[k].iloc[i]] for i in cps] for k in ("bottom", "top", "trend", "bottom_cov", "top_cov")},
+    }
+    an = find_analogs(f)
+    ref["analogs"] = {"features_used": an["features_used"], "matches": [[m["date"], m["similarity"]] for m in an["matches"]]}
+    (tmp_path / "ref.json").write_text(json.dumps(_plain(ref)))
+    r = subprocess.run(["node", str(ART / "inputs.test.js"), str(ART / "build" / "quant.js"), str(tmp_path / "ref.json")], capture_output=True, text=True, timeout=600)
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert r.stdout.startswith("ok:")

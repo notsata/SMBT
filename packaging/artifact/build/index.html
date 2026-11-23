@@ -177,7 +177,7 @@ tr.click { cursor: pointer; } tr.click:hover td { background: var(--panel2); }
   <section data-tab="history" hidden>
     <div class="bar" id="hi-chips"></div>
     <div class="panel"><h2>Closest past conditions <span class="meta" id="hi-meta">historical similarity</span></h2><div class="scroll" id="hi-matches"><span class="skeleton">—</span></div>
-      <p class="note">Similarity of point-in-time percentile fingerprints (1 = identical): distance from the 200-day, 63-day momentum, drawdown and 20-day volatility. Matches are at least 40 sessions apart and exclude the last 126. Context, not odds.</p></div>
+      <p class="note" id="hi-note">Similarity of point-in-time percentile fingerprints (1 = identical). Matches are at least 40 sessions apart and exclude the last 126. Context, not odds.</p></div>
     <div class="grid2">
       <div class="panel"><h2>What followed the matches <span class="meta">vs all days</span></h2><div class="scroll" id="hi-dist"></div></div>
       <div class="panel"><h2>Named turning points</h2><div class="scroll" id="hi-keys"></div></div>
@@ -205,9 +205,15 @@ tr.click { cursor: pointer; } tr.click:hover td { background: var(--panel2); }
 
   <section data-tab="sources" hidden>
     <div class="panel"><h2>Connection</h2><dl class="kv" id="d-kv"></dl></div>
-    <div class="panel"><h2>Not available on this page</h2>
-      <ul class="why"><li><b>VIX and its term structure</b>: Twelve Data and Alpha Vantage don't cover indexes.</li><li><b>S&amp;P 500 breadth</b>: needs every member's history, far beyond a free plan's request budget.</li><li><b>Macro series</b> (curve, credit spreads, Fed, unemployment): no FRED connector.</li><li><b>Streaming prices</b>: a page in Claude can't hold a live connection; quotes refresh every 60 s instead.</li></ul>
-      <p class="note">So the Bottom and Top scores use their price-based components only (shown as coverage on each card), and the regime ignores VIX and breadth. The full set runs in the SMBT server and Windows app. Nothing is saved: everything lasts until you close this page.</p></div>
+    <div class="panel"><h2>Market-wide inputs <span class="meta">loaded once per visit</span></h2><dl class="kv" id="d-ex"></dl>
+      <div class="opts" style="margin-top:8px"><label><input type="checkbox" id="vixp"> My Alpha Vantage plan is premium (load VIX index data)</label></div>
+      <ul class="why">
+        <li><b>Sector breadth</b>: the server's breadth formulas on the 11 SPDR sector funds (11 Twelve Data requests). A proxy: the server uses every S&amp;P 500 member, which needs ~500 requests.</li>
+        <li><b>Macro</b>: 2-year, 10-year and 3-month Treasury yields, Fed funds and unemployment from Alpha Vantage's free economic data (5 of its 25 daily requests), with the server's publication lags.</li>
+        <li><b>Fear &amp; Greed</b>: momentum, safe-haven demand (SPY vs TLT), new highs − lows and McClellan summation.</li>
+        <li><b>VIX</b>: Alpha Vantage index data, premium plans only; Twelve Data has no indexes.</li>
+        <li><b>No free source here</b>: credit spreads, financial conditions (NFCI), real yields, core CPI, Philly Fed manufacturing, Fed balance-sheet liquidity, market cap / GDP, and streaming prices (quotes refresh every 60 s).</li></ul>
+      <p class="note">Nothing is saved: everything lasts until you close this page, so each visit loads these again.</p></div>
   </section>
 </main>
 <div id="toast" class="toast" hidden></div>
@@ -247,14 +253,18 @@ tr.click { cursor: pointer; } tr.click:hover td { background: var(--panel2); }
   const st = { mcp: null, perms: null, sample: null, calls: 0, errors: [], tools: null, available: null, props: {},
     market: "SPY", symbol: "SPY", watch: ["SPY", "QQQ", "NVDA"], tab: "dashboard",
     quotes: new Map(), daily: new Map(), frames: new Map(), scan: null, scanning: false,
-    gate: Promise.resolve(), nextAt: 0, recent: [], waitUntil: 0, rules: [], fired: [], ai: [], aiCtl: null };
+    waitUntil: 0, rules: [], fired: [], ai: [], aiCtl: null,
+    // market-wide inputs, loaded once per visit in the background (breadth members, TLT, VIX, macro observations)
+    ex: { members: {}, tlt: null, vix: null, macro: {}, version: 0, started: false, status: { breadth: "not loaded", macro: "not loaded", vix: "not loaded", tlt: "not loaded" }, macroLast: {} } };
+  const SECTORS = ["XLB", "XLC", "XLE", "XLF", "XLI", "XLK", "XLP", "XLRE", "XLU", "XLV", "XLY"];
+  const AV = PROVIDERS[1];
   class Fail extends Error {}
 
   // ---------- session clock ----------
   function renderSession() {
     const s = S.sessionAt(new Date()), wait = st.waitUntil - Date.now();
     const label = { regular: "Market open", premarket: "Pre-market", afterhours: "After hours", closed: "Market closed" }[s.session];
-    $("session").innerHTML = `<span class="dot ${s.session === "regular" ? "open" : ""}"></span><span>${label} · last close ${s.lastCompleted}${wait > 0 ? ` · waiting ${Math.ceil(wait / 1000)} s for ${esc(P.name)}'s rate limit` : ""}</span>`;
+    $("session").innerHTML = `<span class="dot ${s.session === "regular" ? "open" : ""}"></span><span>${label} · last close ${s.lastCompleted}${wait > 0 ? ` · waiting ${Math.ceil(wait / 1000)} s for ${esc(st.waitFor || P.name)}'s rate limit` : ""}</span>`;
     return s;
   }
   function banner(title, body, actions = "") {
@@ -274,53 +284,56 @@ tr.click { cursor: pointer; } tr.click:hover td { background: var(--panel2); }
       try { const d = await st.mcp.describeTool(P.server, t), p = d && d.inputSchema && d.inputSchema.properties; if (p) st.props[t] = new Set(Object.keys(p)); } catch { /* keep minimal inputs */ }
     }
   }
-  function call(tool, args) {
-    const run = st.gate.then(async () => {
+  /** One request at a time per provider, within that plan's per-minute limit (each provider has its own queue). */
+  function call(tool, args, prov = P) {
+    prov.gate = prov.gate || Promise.resolve(); prov.recent = prov.recent || []; prov.nextAt = prov.nextAt || 0;
+    const run = prov.gate.then(async () => {
       for (;;) {
-        const now = Date.now(); st.recent = st.recent.filter((t) => now - t < 60000);
-        const wait = Math.max(st.recent.length >= P.perMin ? st.recent[0] + 60500 - now : 0, st.nextAt - now);
+        const now = Date.now(); prov.recent = prov.recent.filter((t) => now - t < 60000);
+        const wait = Math.max(prov.recent.length >= prov.perMin ? prov.recent[0] + 60500 - now : 0, prov.nextAt - now);
         if (wait <= 0) break;
-        if (wait > 2000) { st.waitUntil = now + wait; renderSession(); } // only long waits are worth a notice
+        if (wait > 2000) { st.waitUntil = now + wait; st.waitFor = prov.name; renderSession(); } // only long waits are worth a notice
         await sleep(Math.min(wait, 1000));
       }
       if (st.waitUntil) { st.waitUntil = 0; renderSession(); }
-      st.recent.push(Date.now());
-      try { return await callNow(tool, args); } finally { st.nextAt = Date.now() + P.spacing; renderDiag(); }
+      prov.recent.push(Date.now());
+      try { return await callNow(tool, args, prov); } finally { prov.nextAt = Date.now() + prov.spacing; renderDiag(); }
     });
-    st.gate = run.catch(() => {});
+    prov.gate = run.catch(() => {});
     return run;
   }
-  async function callNow(tool, args) {
-    st.calls++;
+  async function callNow(tool, args, prov) {
+    st.calls++; prov.calls = (prov.calls || 0) + 1;
     try {
-      const r = await st.mcp.callTool(P.server, tool, args, { cache: false });
+      const r = await st.mcp.callTool(prov.server, tool, args, { cache: false });
       return r.payload !== undefined ? r.payload : (r.content || []).filter((c) => c.type === "text").map((c) => c.text).join("\n");
     } catch (e) {
-      if (e && e.retryable) { await sleep(Math.min(e.retryAfterMs || 1500 + Math.random() * 1000, 60000)); st.calls++; const r = await st.mcp.callTool(P.server, tool, args, { cache: false }); return r.payload !== undefined ? r.payload : ""; }
+      if (e && e.retryable) { await sleep(Math.min(e.retryAfterMs || 1500 + Math.random() * 1000, 60000)); st.calls++; prov.calls++; const r = await st.mcp.callTool(prov.server, tool, args, { cache: false }); return r.payload !== undefined ? r.payload : ""; }
       throw e;
     }
   }
   const RATE = /spreading out|requests per (day|second)|rate limit|API credits|current minute/i;
   function note(line) { st.errors.unshift(`${new Date().toLocaleTimeString()} ${line}`.slice(0, 300)); st.errors.length = Math.min(st.errors.length, 6); renderDiag(); }
-  function friendly(m, sym) {
-    note(`provider: ${m}`);
-    if (/symbol\W.*(missing or invalid|not found)/i.test(m)) return `${P.name} doesn't recognise ${sym}. Check the ticker.`;
-    return RATE.test(m) && !/premium feature/i.test(m) ? `${P.name}'s plan limit was reached (${P.limits}). Wait a minute and try again; if it keeps happening, today's allowance is used up.` : m;
+  function friendly(m, sym, prov = P) {
+    note(`${prov.name}: ${m}`);
+    if (/symbol\W.*(missing or invalid|not found)/i.test(m)) return `${prov.name} doesn't recognise ${sym}. Check the ticker.`;
+    if (/not yet entitled/i.test(m)) return `${prov.name}: this data needs a premium plan.`;
+    return RATE.test(m) && !/premium feature/i.test(m) ? `${prov.name}'s plan limit was reached (${prov.limits}). Wait a minute and try again; if it keeps happening, today's allowance is used up.` : m;
   }
   /** Connector errors: page-level ones become a banner (returns null); the rest a message for the affected section. */
-  function explain(e, sym) {
+  function explain(e, sym, prov = P) {
     const code = e && e.code;
     note(`${code || "error"}: ${e && e.message ? e.message : e}`);
-    if (code === "server_not_connected" || code === "selection_required") { banner(`${P.name} isn't connected`, " " + CONNECT_HELP); return null; }
-    if (code === "needs_reauth") { banner(`Reconnect ${P.name}`, " Your connector needs to sign in again: claude.ai → Settings → Connectors."); return null; }
-    if (code === "not_in_manifest") { banner(`This page isn't allowed to use ${P.name}`, " Allow it from the page's permissions.", ' <button class="btn ghost" id="perm" type="button">Permissions</button>'); $("perm").onclick = () => st.perms && st.perms.manage().catch(() => {}); return null; }
-    if (code === "approval_required") { banner("Approval needed", ` Tap Refresh to approve the ${P.name} request.`); return null; }
-    if (code === "blocked_by_policy") { banner("Blocked by your organization", ` Your organization's policy blocks this ${P.name} tool.`); return null; }
-    if (code === "tool_error") { const r = e.result || {}, text = (r.content || []).filter((c) => c.type === "text").map((c) => c.text).join("\n"); const said = S.providerMessage(r.structuredContent) || S.providerMessage(text) || S.providerMessage(e.message); return said ? friendly(said, sym) : `${P.name} reported an error.`; }
-    if (code === "server_unavailable" || code === "upstream_error") return `${P.name} didn't answer. Try again in a moment.`;
+    if (code === "server_not_connected" || code === "selection_required") { banner(`${prov.name} isn't connected`, " " + CONNECT_HELP); return null; }
+    if (code === "needs_reauth") { banner(`Reconnect ${prov.name}`, " Your connector needs to sign in again: claude.ai → Settings → Connectors."); return null; }
+    if (code === "not_in_manifest") { banner(`This page isn't allowed to use ${prov.name}`, " Allow it from the page's permissions.", ' <button class="btn ghost" id="perm" type="button">Permissions</button>'); $("perm").onclick = () => st.perms && st.perms.manage().catch(() => {}); return null; }
+    if (code === "approval_required") { banner("Approval needed", ` Tap Refresh to approve the ${prov.name} request.`); return null; }
+    if (code === "blocked_by_policy") { banner("Blocked by your organization", ` Your organization's policy blocks this ${prov.name} tool.`); return null; }
+    if (code === "tool_error") { const r = e.result || {}, text = (r.content || []).filter((c) => c.type === "text").map((c) => c.text).join("\n"); const said = S.providerMessage(r.structuredContent) || S.providerMessage(text) || S.providerMessage(e.message); return said ? friendly(said, sym, prov) : `${prov.name} reported an error.`; }
+    if (code === "server_unavailable" || code === "upstream_error") return `${prov.name} didn't answer. Try again in a moment.`;
     return (e && e.message) || "The request failed.";
   }
-  const asFail = (e, sym) => (e instanceof Fail ? e : new Fail(e instanceof Error && !e.code ? friendly(e.message, sym) : explain(e, sym) || ""));
+  const asFail = (e, sym, prov = P) => (e instanceof Fail ? e : new Fail(e instanceof Error && !e.code ? friendly(e.message, sym, prov) : explain(e, sym, prov) || ""));
 
   // ---------- data: quotes and daily history, kept for this visit ----------
   async function getQuote(sym, force = false) {
@@ -356,13 +369,58 @@ tr.click { cursor: pointer; } tr.click:hover td { background: var(--panel2); }
     st.daily.set(sym, rec); return rec;
   }
   function confirmed(bars) { const s = S.sessionAt(new Date()); return bars.filter((b) => !(b.t === s.today && (s.session === "premarket" || s.session === "regular"))); }
-  function frameFor(sym, bench) { // indicator frame + scores on completed sessions, computed once per data version
-    const d = st.daily.get(sym), bars = confirmed(d.bars), key = `${sym}:${bars.length}:${bars[bars.length - 1].t}:${bench ? "b" : ""}`;
+  function frameFor(sym, bench, plain = false) { // indicator frame (+ market-wide inputs) and scores on completed sessions, once per data version
+    const d = st.daily.get(sym), bars = confirmed(d.bars), key = `${sym}:${bars.length}:${bars[bars.length - 1].t}:${bench ? "b" : ""}:${plain ? "p" : st.ex.version}`;
     if (!st.frames.has(key)) {
       const bm = bench && st.daily.get(bench) ? new Map(confirmed(st.daily.get(bench).bars).map((b) => [b.t, b.c])) : null;
-      const f = Q.technicalFrame(bars, bm); st.frames.set(key, { f, sf: Q.scoreFrame(f), compact: d.compact });
+      const f = Q.technicalFrame(bars, bm), x = st.ex;
+      if (!plain) Q.augment(f, { members: Object.keys(x.members).length >= 9 ? x.members : null, minNames: 9, breadthFlags: false, tlt: x.tlt, vix: x.vix, macro: x.macro });
+      st.frames.set(key, { f, sf: Q.scoreFrame(f), compact: d.compact });
     }
     return st.frames.get(key);
+  }
+  // ---------- market-wide inputs: sector breadth (proxy), TLT, macro and VIX ----------
+  const closes = (bars) => new Map(confirmed(bars).map((b) => [b.t, b.c]));
+  function exChanged() { st.ex.version++; renderDiag(); clearTimeout(exChanged.h); exChanged.h = setTimeout(() => { if (st.tab === "dashboard" || st.tab === "history") SHOW[st.tab](); }, 400); }
+  async function loadExtras() {
+    if (st.ex.started || !st.mcp) return;
+    st.ex.started = true;
+    const x = st.ex, avOn = st.available && st.available.includes(AV.name);
+    const prices = (async () => { // Twelve Data (or the primary provider)
+      try { x.status.tlt = "loading"; x.tlt = closes((await getDaily("TLT")).bars); x.status.tlt = "ready"; exChanged(); } catch (e) { x.status.tlt = e.message; renderDiag(); }
+      if (P.premiumOptions) { x.status.breadth = "skipped: needs 11 requests, too many for Alpha Vantage's free 25 a day"; renderDiag(); return; }
+      let n = 0;
+      for (const s of SECTORS) { x.status.breadth = `loading ${n}/${SECTORS.length}`; renderDiag(); try { x.members[s] = closes((await getDaily(s)).bars); n++; } catch (e) { note(`breadth ${s}: ${e.message}`); } }
+      x.status.breadth = n >= 9 ? `ready (${n} of ${SECTORS.length} sector funds)` : `unavailable (${n} of ${SECTORS.length} loaded)`;
+      exChanged();
+    })();
+    const macro = (async () => { // Alpha Vantage economic series (free) and VIX (premium index data)
+      if (!avOn) { x.status.macro = "needs the Alpha Vantage connector"; x.status.vix = "needs the Alpha Vantage connector"; renderDiag(); return; }
+      const get = async (tool, args, label) => { const s = S.parseSeries(await call(tool, { ...args, return_full_data: true }, AV)); if (!s.length) throw new Error(`${label}: no data`); x.macroLast[label] = s[s.length - 1]; return s; };
+      try {
+        x.status.macro = "loading";
+        const y10 = await get("TREASURY_YIELD", { interval: "daily", maturity: "10year" }, "10-year Treasury"), y2 = await get("TREASURY_YIELD", { interval: "daily", maturity: "2year" }, "2-year Treasury");
+        const y3m = await get("TREASURY_YIELD", { interval: "daily", maturity: "3month" }, "3-month Treasury");
+        const m10 = new Map(y10.map((r) => [r.date, r.value])), spread = (s) => s.flatMap((r) => (m10.has(r.date) ? [{ date: r.date, value: Math.round((m10.get(r.date) - r.value) * 100) / 100 }] : []));
+        x.macro.T10Y2Y = spread(y2); x.macro.T10Y3M = spread(y3m); exChanged();
+        x.macro.DFF = await get("FEDERAL_FUNDS_RATE", { interval: "daily" }, "Fed funds rate"); exChanged();
+        x.macro.UNRATE = await get("UNEMPLOYMENT", {}, "Unemployment rate");
+        x.status.macro = "ready"; exChanged();
+      } catch (e) { x.status.macro = asFail(e, "macro", AV).message || "failed"; exChanged(); }
+      await loadVix();
+    })();
+    await Promise.all([prices, macro]);
+  }
+  async function loadVix() { // premium-only index data: requested only when the viewer says their plan has it
+    const x = st.ex;
+    if (!(st.available && st.available.includes(AV.name))) return;
+    if (!$("vixp").checked) { x.status.vix = "off: needs an Alpha Vantage premium plan (index data)"; renderDiag(); return; }
+    try {
+      x.status.vix = "loading"; renderDiag();
+      const v = S.parseDaily(await call("INDEX_DATA", { symbol: "VIX", interval: "daily", datatype: "csv", return_full_data: true }, AV));
+      if (!v.length) throw new Error("no VIX data returned");
+      x.vix = new Map(v.map((b) => [b.t, b.c])); x.status.vix = `ready (through ${v[v.length - 1].t})`; exChanged();
+    } catch (e) { x.status.vix = asFail(e, "VIX", AV).message || "failed"; renderDiag(); }
   }
   function dailyStatus(f) {
     const s = S.sessionAt(new Date()), last = f.t[f.n - 1];
@@ -433,19 +491,20 @@ tr.click { cursor: pointer; } tr.click:hover td { background: var(--panel2); }
     const card = (id, lab, val, sub, status = ds, reason = dreason) => `<button class="card" type="button" data-card="${id}" aria-expanded="false"><span class="lab">${esc(lab)}</span>${val}<span class="sub">${sub}</span><span>${badge(status, reason)} <span class="sub">${esc(f.t[L])}</span></span></button>`;
     const na = (id, lab, why) => card(id, lab, '<span class="val txt muted">Unavailable</span>', esc(why), "UNAVAILABLE", why);
     $("mk-cards").innerHTML = [
-      card("regime", "Market regime", `<span class="val txt r-${reg}">${esc(Q.REGIMES[reg] || "Unavailable")}</span>`, "price-based rules"),
+      card("regime", "Market regime", `<span class="val txt r-${reg}">${esc(Q.REGIMES[reg] || "Unavailable")}</span>`, `rules on trend, drawdown, RSI${f.pct_above_50 ? ", sector breadth" : ""}${f.vix ? ", VIX" : ""}`),
       card("bottom", "Bottom opportunity", `<span class="val">${fmt(sf.bottom[L], 0)}</span>${gauge(sf.bottom[L], "var(--up)")}`, `coverage ${avail("bottom")} of ${SIDE_N.bottom} inputs`),
       card("top", "Top risk", `<span class="val">${fmt(sf.top[L], 0)}</span>${gauge(sf.top[L], "var(--down)")}`, `coverage ${avail("top")} of ${SIDE_N.top} inputs`),
       card("trend", "Trend confidence", `<span class="val">${fmt(sf.trend[L], 0)}</span>${gauge(sf.trend[L], "var(--accent)")}`, `direction ${sf.trend_dir[L]}`),
-      na("vix", "VIX", "No index data source on this page"), na("breadth", "S&P 500 breadth", "Needs every member's history"),
-      na("sentiment", "Fear & Greed", "Needs VIX, breadth and credit data"), na("macro", "Macro risk", "No FRED connector"),
+      ...extraCards(f, L, card, na, ds, dreason),
     ].join("");
     $("mk-cards").querySelectorAll("[data-card]").forEach((b) => (b.onclick = () => {
       const open = b.getAttribute("aria-expanded") !== "true";
       $("mk-cards").querySelectorAll("[data-card]").forEach((x) => x.setAttribute("aria-expanded", "false"));
-      b.setAttribute("aria-expanded", String(open)); cardDetail(open ? b.dataset.card : null, fr);
+      b.setAttribute("aria-expanded", String(open)); st.openCard = open ? b.dataset.card : null; cardDetail(st.openCard, fr);
     }));
-    cardDetail(null);
+    const keep = st.openCard && $("mk-cards").querySelector(`[data-card="${st.openCard}"]`);
+    if (keep) keep.setAttribute("aria-expanded", "true");
+    cardDetail(keep ? st.openCard : null, fr);
     renderVerdict(sym, fr);
     const drivers = (side) => `<ul class="drivers">${Q.explain(sf, L, side).components.filter((c) => c.available).slice(0, 7).map((c) => `<li><span title="${esc(c.detail)}">${esc(c.label)}</span><span class="gauge"><i style="width:${c.value * 100}%;background:${side === "top" ? "var(--down)" : "var(--up)"}"></i></span><span class="n">${fmt(c.value, 2)}</span></li>`).join("")}</ul>`;
     $("mk-drivers").className = ""; $("mk-drivers").innerHTML = `<div class="note" style="margin:0 0 4px">Top risk</div>${drivers("top")}<div class="note" style="margin:10px 0 4px">Bottom opportunity</div>${drivers("bottom")}`;
@@ -459,6 +518,18 @@ tr.click { cursor: pointer; } tr.click:hover td { background: var(--panel2); }
       $("mk-event").innerHTML = e && e.length ? e.map((x) => `<div class="msg" style="margin-top:8px"><b>${esc(x.label)} · ${esc(x.date)}</b>${(x.triggered_by || []).map((t) => `${esc(t.label)}${ok(t.value) ? ` ${fmt(t.value, 2)}` : Array.isArray(t.value) ? ` ${t.value.map((v) => fmt(v, 2)).join(" → ")}` : ""}`).join(" · ")}<div class="note">What happened next (evaluation only): ${Object.entries(x.forward_realized).map(([h, v]) => `${h}d <span class="${cls(v)}">${pct(v, 1, true)}</span>`).join(" · ")}</div></div>`).join("") : "";
     });
   }
+  function extraCards(f, L, card, na, ds, dreason) {
+    const x = st.ex.status, busy = (s) => /^loading|^not loaded/.test(s), why = (s) => (busy(s) ? `Loading${/\d/.test(s) ? ` (${s.replace("loading ", "")})` : ""}…` : s);
+    const has = (k) => f[k] && ok(f[k][L]);
+    const vix = has("vix") ? card("vix", "VIX", `<span class="val">${fmt(f.vix[L], 2)}</span>`, `percentile ${pct(Q.expandingPct(f.vix)[L], 0)} · ${fmt(f.vix_vs50[L], 2)}× its 50-day`) : na("vix", "VIX", why(x.vix));
+    const br = has("pct_above_50") ? card("breadth", "Sector breadth", `<span class="val">${fmt(f.pct_above_50[L], 0)}%</span>`, `of 11 sector funds above 50-day · McClellan ${fmt(f.mcclellan_osc[L], 0)}`) : na("breadth", "Sector breadth", why(x.breadth));
+    const fg = has("fear_greed") ? card("sentiment", "Fear & Greed", `<span class="val">${fmt(f.fear_greed[L], 0)}</span><div class="gauge"><i style="width:${f.fear_greed[L]}%;background:var(--warn)"></i></div>`, `reconstructed · ${f.fear_greed_n[L]} of 6 inputs`)
+      : na("sentiment", "Fear & Greed", busy(x.breadth) || busy(x.tlt) ? "Loading inputs…" : "Fewer than 3 inputs available");
+    const stale = ["curve_10y2y", "fed_funds", "sahm"].filter((k) => f[k] && !ok(f[k][L]));
+    const mr = has("macro_risk") ? card("macro", "Macro risk", `<span class="val">${fmt(f.macro_risk[L], 0)}</span><div class="gauge"><i style="width:${f.macro_risk[L]}%;background:var(--down)"></i></div>`, `${Object.keys(f.mr).length} of 8 components · official releases`,
+      stale.length ? "STALE" : "DELAYED", stale.length ? `No current value for ${stale.join(", ")}` : "Official releases with publication lags (Treasury, Fed, BLS via Alpha Vantage)") : na("macro", "Macro risk", why(x.macro));
+    return [vix, br, fg, mr];
+  }
   function cardDetail(id, fr) {
     const el = $("mk-detail");
     if (!id) { el.hidden = true; return; }
@@ -468,7 +539,19 @@ tr.click { cursor: pointer; } tr.click:hover td { background: var(--panel2); }
       const ex = Q.explain(sf, L, id);
       el.innerHTML = `<h2>${id === "bottom" ? "Bottom opportunity" : "Top risk"} components <span class="meta">heuristic · weights by regime (${esc(ex.regime)})</span></h2><ul class="drivers">${ex.components.map((c) => `<li class="${c.available ? "" : "muted"}"><span title="${esc(c.detail)}">${esc(c.label)} <span class="muted">· ${esc(c.category)}</span></span><span class="gauge"><i style="width:${(c.value || 0) * 100}%;background:${id === "top" ? "var(--down)" : "var(--up)"}"></i></span><span class="n">${c.available ? fmt(c.value, 2) : "n/a"}</span></li>`).join("")}</ul><p class="note">Each component is 0–1 (point-in-time percentile or a recent flag). Categories without data are dropped and the weights renormalised; the score is withheld below 25% coverage.</p>`;
     } else if (id === "trend") el.innerHTML = `<h2>Trend confidence parts</h2>${table([["Part"], ["Value", 1]], Object.entries(sf.tc).map(([k, v]) => [esc(k.replace("_", " ")), fmt(v[L], 2)]))}`;
-    else el.innerHTML = `<h2>${esc(id)}</h2><p>Not available on this page. See Data sources.</p>`;
+    else if (id === "breadth" && f.pct_above_50) el.innerHTML = `<h2>Sector breadth <span class="meta">11 SPDR sector funds as members · proxy</span></h2>`
+      + table([["Measure"], ["Today", 1]], [["% above 20-day", f.pct_above_20[L]], ["% above 50-day", f.pct_above_50[L]], ["% above 200-day", f.pct_above_200[L]], ["McClellan oscillator", f.mcclellan_osc[L]], ["McClellan summation", f.mcclellan_sum[L]], ["New highs − new lows (%)", f.nhnl_pct[L]], ["% oversold (RSI < 30)", f.pct_oversold[L]], ["% overbought (RSI > 70)", f.pct_overbought[L]]].map(([k, v]) => [k, fmt(v, 1)]))
+      + `<p class="note">The server's formulas on ${Object.keys(st.ex.members).join(", ")}. The server uses every S&P 500 member; 11 sectors move in coarser steps (each is about 9%), so read extremes as rougher. Zweig thrust and 90% down days are not computed on 11 names.</p>`;
+    else if (id === "sentiment" && f.fg) el.innerHTML = `<h2>Fear &amp; Greed inputs <span class="meta">each a percentile of its own history, 0 = fear</span></h2>`
+      + table([["Input"], ["Today", 1]], Object.entries(f.fg).map(([k, v]) => [esc(k), fmt(v[L], 0)]))
+      + `<p class="note">Reconstruction of CNN's published design, not CNN's index. ${f.vix ? "" : "VIX (premium index data) and "}credit-spread demand have no free source here, so ${f.fear_greed_n[L]} of 6 inputs are averaged.</p>`;
+    else if (id === "macro" && f.mr) el.innerHTML = `<h2>Macro risk components <span class="meta">0–1 each</span></h2>`
+      + table([["Component"], ["Today", 1]], Object.entries(f.mr).map(([k, v]) => [esc(k), fmt(v[L], 2)]))
+      + table([["Series as known today"], ["Value", 1], ["Latest release"]], [["10y − 2y Treasury spread", f.curve_10y2y, "2-year Treasury"], ["10y − 3m Treasury spread", f.curve_10y3m, "3-month Treasury"], ["Fed funds rate", f.fed_funds, "Fed funds rate"], ["Unemployment rate", f.unrate, "Unemployment rate"], ["Sahm gap (pp)", f.sahm, "Unemployment rate"]]
+        .filter(([, a]) => a).map(([k, a, lab]) => [k, fmt(a[L], 2), esc(st.ex.macroLast[lab] ? st.ex.macroLast[lab].date : "—")]))
+      + `<p class="note">Alpha Vantage's free economic series (latest revised values). Each observation counts only after its publication lag (rates 1 day, unemployment 37 days) and is dropped once stale, as on the server. Credit spreads, financial conditions, real yields, core CPI and manufacturing have no free source here, so ${Object.keys(f.mr).length} of the server's 8 components are used.</p>`;
+    else if (id === "vix" && f.vix) el.innerHTML = `<h2>VIX</h2>${table([["Measure"], ["Today", 1]], [["VIX close", fmt(f.vix[L], 2)], ["vs 50-day average", fmt(f.vix_vs50[L], 2) + "×"], ["Percentile of its history", pct(Q.expandingPct(f.vix)[L], 0)]])}<p class="note">Cboe VIX daily closes from Alpha Vantage index data (premium).</p>`;
+    else el.innerHTML = `<h2>${esc({ vix: "VIX", breadth: "Sector breadth", sentiment: "Fear & Greed", macro: "Macro risk" }[id] || id)}</h2><p>${esc({ vix: st.ex.status.vix, breadth: st.ex.status.breadth, sentiment: "Needs at least 3 inputs: momentum is ready; waiting on sector breadth and TLT.", macro: st.ex.status.macro }[id] || "Not available")}</p><p class="note">See Data sources for details.</p>`;
   }
   function renderVerdict(sym, fr) {
     const { f, sf } = fr, L = f.n - 1, bs = sf.bottom[L], ts = sf.top[L], el = $("mk-verdict");
@@ -644,6 +727,7 @@ tr.click { cursor: pointer; } tr.click:hover td { background: var(--panel2); }
     fr.analogs = fr.analogs || Q.findAnalogs(fr.f); fr.keys = fr.keys || Q.compareKeyDates(fr.f);
     const a = fr.analogs, H = ["20", "60", "126", "252"];
     $("hi-meta").textContent = `${sym} · as of ${a.as_of || "—"}`;
+    $("hi-note").textContent = `Similarity of point-in-time percentile fingerprints (1 = identical) over ${(a.features_used || []).map((x) => x.split(":")[1].replace(/_/g, " ")).join(", ")}. Matches are at least 40 sessions apart and exclude the last 126. Context, not odds.`;
     if (!a.matches.length) { $("hi-matches").innerHTML = `<div class="msg">${esc(a.note || "No matches")}</div>`; return; }
     $("hi-matches").innerHTML = table([["Date"], ["Similarity", 1], ["Period"], ...H.map((h) => [`+${h}d`, 1]), ["Max dip 126d", 1]], a.matches.map((m) => [esc(m.date), fmt(m.similarity, 3), esc(m.event || ""), ...H.map((h) => `<span class="${cls(m.forward[h])}">${pct(m.forward[h], 1, true)}</span>`), pct(m.forward.max_drawdown_126, 1)]));
     $("hi-dist").innerHTML = table([["Horizon"], ["Matches median", 1], ["Hit", 1], ["All days median", 1], ["Hit", 1]], H.map((h) => { const d = a.outcome_distribution[h], u = a.unconditional[h]; return [`${h} sessions (n=${d.n})`, pct(d.median, 1, true), pct(d.hit_rate, 0), pct(u.median, 1, true), pct(u.hit_rate, 0)]; }));
@@ -690,7 +774,9 @@ tr.click { cursor: pointer; } tr.click:hover td { background: var(--panel2); }
       async execute(i) { const [sym, fr] = await loadFrame(i.symbol), { f, sf } = fr, L = f.n - 1; fr.prob = fr.prob || Q.scoreProbabilities(sf, f.close);
         const q = st.quotes.get(sym);
         return { symbol: sym, provider: P.name, closes_through: f.t[L], latest_quote: q ? { price: q.q.last, change_pct: r3(q.q.changePct), trading_day: q.q.day } : null, regime: Q.REGIMES[sf.regime[L]], regime_reasons: Q.regimeReasons(f, L),
-          bottom_score: r3(sf.bottom[L]), top_score: r3(sf.top[L]), trend_confidence: r3(sf.trend[L]), trend_direction: sf.trend_dir[L], inputs_missing: "VIX, breadth, sentiment and macro components have no source on this page",
+          bottom_score: r3(sf.bottom[L]), top_score: r3(sf.top[L]), trend_confidence: r3(sf.trend[L]), trend_direction: sf.trend_dir[L], breadth_proxy_pct_above_50: r3(f.pct_above_50 && f.pct_above_50[L]), fear_greed: r3(f.fear_greed && f.fear_greed[L]), fear_greed_inputs: f.fear_greed_n ? f.fear_greed_n[L] : 0,
+          macro_risk: r3(f.macro_risk && f.macro_risk[L]), curve_10y2y: r3(f.curve_10y2y && f.curve_10y2y[L]), fed_funds: r3(f.fed_funds && f.fed_funds[L]), unemployment: r3(f.unrate && f.unrate[L]), vix: r3(f.vix && f.vix[L]),
+          inputs_note: "Breadth is a proxy from 11 sector funds; macro uses Treasury yields, Fed funds and unemployment only; VIX only with a premium Alpha Vantage plan; no credit-spread data.",
           bottom_drivers: Q.explain(sf, L, "bottom").components.filter((c) => c.available).slice(0, 5).map((c) => [c.label, c.value]), top_drivers: Q.explain(sf, L, "top").components.filter((c) => c.available).slice(0, 5).map((c) => [c.label, c.value]),
           outcomes: [...fr.prob.bottom, ...fr.prob.top].filter((r) => r.available).map((r) => ({ event: r.event, horizon: r.horizon, frequency: r3(r.probability), base_rate: r3(r.base_rate), episodes: r.episodes, oos_brier_skill: r3(r.oos.brier_skill) })) }; } },
     { name: "get_stock_analysis", description: "Stock state (pullback / accumulation / decline / exhaustion), its reasons, forward-return stats after past occurrences of the same state, and key indicators for any ticker.",
@@ -717,7 +803,7 @@ tr.click { cursor: pointer; } tr.click:hover td { background: var(--panel2); }
 - Name the as-of date and the provider for the numbers you use.
 - Keep three kinds of evidence separate: heuristic scores (not probabilities), empirical frequencies (with episodes and out-of-sample Brier skill), and historical similarity (context, not odds).
 - Give the bull case and the bear case, then a short balanced conclusion. Say when evidence is thin, when q-values are not significant, or when a backtest's interval includes zero.
-- These scores use price-based inputs only on this page (no VIX, breadth or macro); say so when it matters.
+- On this page breadth is an 11-sector-fund proxy, macro covers rates and unemployment only, and VIX may be missing; say so when it matters.
 - No price targets, no instructions to trade. This is research, not investment advice. Keep it under 250 words.`;
   async function askAnalyst(text) {
     const log = $("ai-log");
@@ -740,6 +826,9 @@ tr.click { cursor: pointer; } tr.click:hover td { background: var(--panel2); }
   // ---------- data sources ----------
   function renderDiag() {
     if (!$("d-kv")) return;
+    const x = st.ex;
+    $("d-ex").innerHTML = kv([["Sector breadth", x.status.breadth], ["TLT (safe-haven input)", x.status.tlt], ["Macro series", x.status.macro + (Object.keys(x.macroLast).length ? ` · ${Object.entries(x.macroLast).map(([k, v]) => `${k} ${v.date}`).join(" · ")}` : "")], ["VIX", x.status.vix],
+      ["Alpha Vantage requests this visit", String(AV.calls || 0)]]);
     $("d-kv").innerHTML = kv([["Connector in use", P.server], ["Connected", st.available ? st.available.join(", ") || "none" : "not checked yet"], ["Tools", st.tools ? st.tools.join(", ") || "none listed" : "not checked yet"],
       ["Plan limits", P.limits], ["Requests this visit", String(st.calls)], ["Symbols loaded", [...st.daily.keys()].join(", ") || "none"], ["History depth", P.premiumOptions ? ($("full").checked ? "full" : "last 100 sessions") : "up to 5,000 sessions"],
       ["AI analyst", st.sample ? "available (your Claude account)" : "not available in this view"], ["Recent errors", st.errors.join(" | ") || "none"]]);
@@ -776,6 +865,7 @@ tr.click { cursor: pointer; } tr.click:hover td { background: var(--panel2); }
   };
   $("ai-form").onsubmit = (e) => { e.preventDefault(); const q = $("ai-q").value.trim(); if (!q || !st.sample) return; $("ai-q").value = ""; askAnalyst(q); };
   $("ai-stop").onclick = () => st.aiCtl && st.aiCtl.abort();
+  $("vixp").onchange = () => { if ($("vixp").checked && st.ex.started && !st.ex.vix) loadVix(); };
   setInterval(() => { renderSession(); }, 15000);
   setInterval(() => checkAlerts(false), 5 * 60 * 1000);
   renderSession(); route();
@@ -800,6 +890,7 @@ tr.click { cursor: pointer; } tr.click:hover td { background: var(--panel2); }
       await learnSchemas();
     } catch (e) { explain(e); }
     renderDiag(); route();
+    loadExtras().catch((e) => note(`inputs: ${e.message}`));
   })();
 })();
 </script>
